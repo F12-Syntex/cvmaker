@@ -1,0 +1,81 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=0.7in]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{array}
+
+% Remove page numbers
+\pagestyle{empty}
+
+% Section formatting
+\titleformat{\section}{\large\bfseries\uppercase}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{12pt}{6pt}
+
+% Custom commands
+\newcommand{\job}[4]{\textbf{#1} | #2 | \textit{#3}\\[2pt] #4\\[8pt]}
+\newcommand{\education}[3]{\textbf{#1} | #2 | \textit{#3}}
+
+% Reduce spacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\renewcommand{\baselinestretch}{1.0}
+
+\begin{document}
+
+% Header
+\begin{center}
+    {\Large \textbf{JOHN SMITH}}\\[4pt]
+    john.smith@email.com $|$ +1 (555) 123-4567 $|$ San Francisco, CA $|$ linkedin.com/in/johnsmith\\
+    \rule{\textwidth}{0.5pt}
+\end{center}
+\vspace{8pt}
+
+\section{Experience}
+
+\job{Senior Software Engineer}{TechCorp Solutions}{Jan 2021 -- Present}{
+\begin{itemize}[leftmargin=12pt, itemsep=1pt, parsep=0pt]
+    \item Lead development of microservices architecture serving 2M+ users, reduced latency 40\%
+    \item Mentor 3 developers, established code review standards, delivered 15+ features ahead of schedule
+    \item Technologies: Java, Spring Boot, PostgreSQL, AWS, Docker
+\end{itemize}
+}
+
+\job{Software Engineer}{InnovateIT Inc.}{Jun 2019 -- Dec 2020}{
+\begin{itemize}[leftmargin=12pt, itemsep=1pt, parsep=0pt]
+    \item Developed RESTful APIs and React applications, achieved 95\% test coverage
+    \item Implemented caching strategies improving response times by 30\%
+    \item Technologies: Java, React, PostgreSQL, Redis
+\end{itemize}
+}
+
+\job{Software Developer}{StartupXYZ}{Aug 2018 -- May 2019}{
+\begin{itemize}[leftmargin=12pt, itemsep=1pt, parsep=0pt]
+    \item Full-stack development, bug fixes, and feature implementation in agile environment
+\end{itemize}
+}
+
+
+
+\section{Education}
+
+\education{Bachelor of Science, Computer Science}{University of California, Berkeley}{May 2018 | GPA: 3.8}
+
+\vspace{8pt}
+
+
+\section{Technical Skills}
+
+\textbf{Languages:} Java, Python, JavaScript, TypeScript, SQL\\
+\textbf{Frameworks:} Spring Boot, React, Angular, Node.js\\
+\textbf{Technologies:} AWS, Docker, PostgreSQL, Redis, Git, Jenkins\\
+
+\vspace{8pt}
+
+
+\section{Certifications}
+
+AWS Solutions Architect Associate (2023) $|$ Oracle Java SE 11 Developer (2022) $|$ Scrum Master (2021)
+
+
+\end{document}
