@@ -1,0 +1,44 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\setlist[itemize]{noitemsep,topsep=0pt}
+
+\begin{document}
+
+% Name and Contact
+\begin{center}
+    {\LARGE \textbf{ {{name}} }}\\
+    {{email}} \quad | \quad {{phone}} \\
+    {{address}}
+\end{center}
+
+\vspace{0.5cm}
+
+% Education
+\section*{Education}
+\begin{itemize}
+    {{#education}}
+    \item \textbf{{{degree}}}, {{institution}} \hfill {{year}}
+    {{/education}}
+\end{itemize}
+
+% Experience
+\section*{Experience}
+\begin{itemize}
+    {{#experience}}
+    \item \textbf{{{job_title}}} at {{company}} ({{years}})
+    \begin{itemize}
+        \item {{description}}
+    \end{itemize}
+    {{/experience}}
+\end{itemize}
+
+% Skills
+\section*{Skills}
+\begin{itemize}
+    {{#skills}}
+    \item {{.}}
+    {{/skills}}
+\end{itemize}
+
+\end{document}
