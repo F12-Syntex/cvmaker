@@ -3,22 +3,43 @@
   "email": "string",
   "phone": "string",
   "address": "string",
+  "linkedin": "string",
+  "github": "string",
+  "website": "string",
+  "summary": "string",
+  "experience": [
+    {
+      "title": "string",
+      "company": "string",
+      "location": "string",
+      "startDate": "string",
+      "endDate": "string",
+      "description": "string"
+    }
+  ],
   "education": [
     {
       "degree": "string",
       "institution": "string",
-      "year": "string"
+      "location": "string",
+      "graduationDate": "string",
+      "gpa": "string"
     }
   ],
-  "experience": [
+  "skills": ["string"],
+  "projects": [
     {
-      "job_title": "string",
-      "company": "string",
-      "years": "string",
-      "description": "string"
+      "name": "string",
+      "description": "string",
+      "technologies": "string",
+      "url": "string"
     }
   ],
-  "skills": [
-    "string"
+  "certifications": [
+    {
+      "name": "string",
+      "issuer": "string",
+      "date": "string"
+    }
   ]
 }
