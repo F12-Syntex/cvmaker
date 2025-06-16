@@ -1,39 +1,17 @@
-I really want to work in a team that cares about ethical AI and user experience.
-Fluent in French and some Japanese. 
-My name is Priya Sharma.
+my name is saifurrahmaan khan, im a 22 year old ( 02/01/2003 ) software engineer, i've been programming since i was about 11 years old, i started of with bash programming and managaed to a cool mini game along with many useful scripts, i later began my software engineering journey
+i started with minecraft where i developed many minecraft plugins and later moved to do it as a freelancer, and i've been doing that since i was around 13 till about 2021 ( it's 2025 now ) i made hundreds of plugins, for many, probably close ot 100 people
+i learnt many new things like database managemenet, java, backend, and how to create modular and good scalable collaborated
 
-Born 1994.
+my skills include java ( started at 13 years old ), react/nuxt/full stack, i have many projects and websites, some include my github https://github.com/F12-Syntex?tab=repositories my websites https://www.kanaquest.co.uk/dashboard https://taskturtles.co.uk/ 
 
-I spent a lot of time volunteering at youth coding camps, which I loved.
+i have many job expoerioences too
 
-Skills: Python, Java, HTML/CSS, leadership, empathy, public speaking, Figma, Adobe XD, SQL, AWS, Git.
+i worked at the univesity of kent asa a peer assistant, where i helped many many students at an expert level helpoed them understand things super simply by breaking down super complex concepts to more easy ones 2023 - 2025
+i worked at an open source project as a assistant porogrammer where i helped aid in the vbisualising different comparison tables with the use of quick tables to show the different models https://github.com/smarr/ReBenchDB along with theme customisation and other ui improvements 2024 - 2024 for one month during the holidays
+i worked at best tutors from 2023 - current, where i teach economics and business A levels, i developed a mock generation program that can compile past papers into unified mocks 
 
-Worked at EcoSoft as a Frontend Developer between 2022 and now. Built and maintained the main dashboard in React, collaborated with backend team, and led two sprints. Also, I ran weekly knowledge-sharing sessions.
+i love swimming, martial arts, i work out and try to stay fit, i have laedaer ship9 skills as i lead the task turltes website with a team oof 4 and i have lots of experience with git 
 
-Education: BSc Computer Engineering from University of Toronto, graduated 2016.
+i graduated 2025 june from the university of kent with a first class degree ( graduation to be announced ) software engineering 2022 - 2025
+i love programming 
 
-Certified AWS Solutions Architect, 2021.
-
-My email: priya.sharma@email.com
-
-I love painting, hiking, and sometimes baking bread (not relevant, but I’m proud).
-
-Before EcoSoft, I interned at DataWiz in 2015 – worked on a data visualization tool with D3.js and Python.
-
-Received “Employee of the Month” twice at EcoSoft. Also got the “Best Volunteer” award at the local youth tech camp.
-
-Contact: +1 647 555 0193
-
-I am interested in working on products that genuinely help people, especially in education and accessibility.
-
-LinkedIn: linkedin.com/in/priyasharma
-
-Did a UX workshop in 2021, organized by Google.
-
-Achievement: Finished the Toronto Waterfront Marathon in 2019!
-
-Would love to grow into a team lead or solutions architect role in the next 2 years.
-
-I am a Canadian citizen, currently based in Toronto.
-
-References available if needed.
