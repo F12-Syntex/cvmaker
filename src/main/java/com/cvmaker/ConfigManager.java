@@ -91,29 +91,24 @@ public class ConfigManager {
         }
     }
 
-    // Generation Mode
+    // Generation Mode - Simplified to only support AI generation
     public GenerationMode getGenerationMode() {
         String mode = properties.getProperty("generation.mode", "ai").toLowerCase();
-        
+
         if ("traditional".equals(mode)) {
-            return GenerationMode.TRADITIONAL;
-        } else if ("direct_latex".equals(mode) || "directlatex".equals(mode)) {
-            return GenerationMode.DIRECT_LATEX;
+            System.out.println("Warning: Traditional mode is deprecated. Using AI mode instead.");
+            return GenerationMode.AI;
         } else {
-            return GenerationMode.AI; // Default mode
+            return GenerationMode.AI; // Only AI mode supported now
         }
     }
 
-    // Debug Settings
-    public boolean shouldSaveStructuredData() {
-        return Boolean.parseBoolean(properties.getProperty("debug.save.structured.data", "true"));
+    // Debug Settings - Simplified
+    public boolean shouldSaveDebugFiles() {
+        return Boolean.parseBoolean(properties.getProperty("debug.save.files", "true"));
     }
 
-    public boolean shouldSaveFilledTemplate() {
-        return Boolean.parseBoolean(properties.getProperty("debug.save.filled.template", "true"));
-    }
-
-    // Validation methods
+    // Validation methods - Simplified for AI-only mode
     public void validateConfiguration() throws IOException {
         // Check if user data file exists
         if (!Files.exists(Paths.get(getUserDataFile()))) {
@@ -126,28 +121,24 @@ public class ConfigManager {
             throw new IOException("Job description file not found: " + jobDescFile);
         }
 
-        // Check if template directory exists
-        if (!Files.exists(Paths.get(getTemplateDirectory()))) {
-            throw new IOException("Template directory not found: " + getTemplateDirectory());
+        // Check if template directory exists (optional - for reference templates)
+        Path templateDir = Paths.get(getTemplateDirectory());
+        if (!Files.exists(templateDir)) {
+            System.out.println("Warning: Template directory not found: " + templateDir + " (will generate without reference template)");
         }
 
-        // Check if specific template exists
-        Path templatePath = Paths.get(getTemplateDirectory()).resolve(getTemplateName());
-        if (!Files.exists(templatePath)) {
-            throw new IOException("Template not found: " + templatePath);
-        }
-
-        // Verify that the template has a template.tex file
-        Path templateTexPath = templatePath.resolve("template.tex");
-        if (!Files.exists(templateTexPath)) {
-            throw new IOException("Template LaTeX file not found: " + templateTexPath);
-        }
-
-        // If not using direct LaTeX mode, verify that the template has a template.json file
-        if (getGenerationMode() != GenerationMode.DIRECT_LATEX) {
-            Path templateJsonPath = templatePath.resolve("template.json");
-            if (!Files.exists(templateJsonPath)) {
-                throw new IOException("Template JSON schema not found: " + templateJsonPath);
+        // Check if specific template exists (optional)
+        String templateName = getTemplateName();
+        if (templateName != null && !templateName.isEmpty() && Files.exists(templateDir)) {
+            Path templatePath = templateDir.resolve(templateName);
+            if (!Files.exists(templatePath)) {
+                System.out.println("Warning: Template not found: " + templatePath + " (will generate without reference template)");
+            } else {
+                // Check if template has a template.tex file (optional reference)
+                Path templateTexPath = templatePath.resolve("template.tex");
+                if (!Files.exists(templateTexPath)) {
+                    System.out.println("Warning: Template LaTeX file not found: " + templateTexPath + " (will generate without reference)");
+                }
             }
         }
 
@@ -156,8 +147,8 @@ public class ConfigManager {
 
     public void printConfiguration() {
         System.out.println("\n=== Configuration Summary ===");
-        System.out.println("Generation Mode: " + getGenerationMode());
-        System.out.println("Template: " + getTemplateName());
+        System.out.println("Generation Mode: AI-Powered LaTeX Generation");
+        System.out.println("Template (Reference): " + getTemplateName());
         System.out.println("Template Directory: " + getTemplateDirectory());
         System.out.println("User Data File: " + getUserDataFile());
         System.out.println("Job Description File: " + (getJobDescriptionFile() != null ? getJobDescriptionFile() : "None"));
@@ -165,13 +156,26 @@ public class ConfigManager {
         System.out.println("Output PDF Name: " + getOutputPdfName());
         System.out.println("AI Model: " + getAiModel());
         System.out.println("AI Temperature: " + getAiTemperature());
-        System.out.println("Save Debug Files: " + (shouldSaveStructuredData() && shouldSaveFilledTemplate()));
+        System.out.println("Save Debug Files: " + shouldSaveDebugFiles());
         System.out.println("=============================\n");
     }
 
     public enum GenerationMode {
-        TRADITIONAL,  // Use existing JSON data with template filling
-        AI,           // Use AI to extract structured data from text, then fill template
-        DIRECT_LATEX  // Use AI to generate complete LaTeX document directly
+        AI  // Only AI mode - generates complete LaTeX directly
+    }
+
+    // Cover Letter Settings
+    public String getCoverLetterPdfName() {
+        return properties.getProperty("output.cover_letter.pdf.name", "generated_cover_letter.pdf");
+    }
+
+    public CoverLetterService.CoverLetterStyle getCoverLetterStyle() {
+        String style = properties.getProperty("cover_letter.style", "MODERN").toUpperCase();
+        try {
+            return CoverLetterService.CoverLetterStyle.valueOf(style);
+        } catch (IllegalArgumentException e) {
+            System.out.println("Warning: Invalid cover letter style '" + style + "', using MODERN");
+            return CoverLetterService.CoverLetterStyle.MODERN;
+        }
     }
 }
