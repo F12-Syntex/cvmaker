@@ -320,6 +320,7 @@ public class AiService {
         prompt.append("3. QUANTIFIED IMPACT: Present achievements with specific metrics, percentages, or scale indicators\n");
         prompt.append("4. STRATEGIC ORDERING: Lead with most relevant qualifications and experiences\n");
         prompt.append("5. CONCISE PRESENTATION: Limit to 1-2 pages, prioritizing high-impact information\n\n");
+        prompt.append("6. RELAVANCE: Infer based on the users data so that additional things not explicitely mentioned can be added to the CV, without lying, simply infering based on the user data\n\n");
 
         prompt.append("CONTENT REQUIREMENTS:\n");
         prompt.append("• PROFESSIONAL SUMMARY: 3-4 lines highlighting exact role fit and key value propositions\n");

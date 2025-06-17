@@ -13,8 +13,9 @@ import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 
 /**
- * AI-powered cover letter generation service that creates targeted, professional cover letters
- * tailored to specific job applications and integrated with CV content.
+ * AI-powered cover letter generation service that creates targeted,
+ * professional cover letters tailored to specific job applications and
+ * integrated with CV content.
  */
 public class CoverLetterService {
 
@@ -69,22 +70,20 @@ public class CoverLetterService {
     }
 
     /**
-     * Generate a complete LaTeX cover letter directly with enhanced progress tracking
+     * Generate a complete LaTeX cover letter directly with enhanced progress
+     * tracking
      */
-    public String generateDirectLatexCoverLetter(String cvContent, String jobDescription, 
+    public String generateDirectLatexCoverLetter(String cvContent, String jobDescription,
             String companyName, String positionTitle, String applicantName, String contactInfo) {
         try {
             // Show detailed progress for this complex operation
             ProgressTracker coverLetterProgress = ProgressTracker.create("AI Cover Letter Generation", 4);
 
             coverLetterProgress.nextStep("Analyzing CV content and job requirements");
-            Thread.sleep(500); // Small delay to show progress
-
             coverLetterProgress.nextStep("Identifying key qualifications and achievements");
-            Thread.sleep(500);
 
             coverLetterProgress.startStep("Generating personalized cover letter content");
-            String prompt = buildCoverLetterGenerationPrompt(cvContent, jobDescription, 
+            String prompt = buildCoverLetterGenerationPrompt(cvContent, jobDescription,
                     companyName, positionTitle, applicantName, contactInfo);
             String response = queryWithProgress(prompt, "Creating professional cover letter");
             coverLetterProgress.completeStep("Cover letter content generated successfully");
@@ -106,7 +105,7 @@ public class CoverLetterService {
     public String generateComplementaryCoverLetter(String cvLatexContent, String jobDescription,
             String companyName, String positionTitle) {
         try {
-            String prompt = buildComplementaryPrompt(cvLatexContent, jobDescription, 
+            String prompt = buildComplementaryPrompt(cvLatexContent, jobDescription,
                     companyName, positionTitle);
             String response = queryWithProgress(prompt, "Creating CV-complementary cover letter");
             return extractLatexFromResponse(response);
@@ -119,10 +118,10 @@ public class CoverLetterService {
      * Generate a cover letter with specific tone and style
      */
     public String generateStyledCoverLetter(String cvContent, String jobDescription,
-            String companyName, String positionTitle, String applicantName, 
+            String companyName, String positionTitle, String applicantName,
             String contactInfo, CoverLetterStyle style) {
         try {
-            String prompt = buildStyledPrompt(cvContent, jobDescription, companyName, 
+            String prompt = buildStyledPrompt(cvContent, jobDescription, companyName,
                     positionTitle, applicantName, contactInfo, style);
             String response = queryWithProgress(prompt, "Creating " + style.getDescription() + " cover letter");
             return extractLatexFromResponse(response);
@@ -221,10 +220,18 @@ public class CoverLetterService {
                 .append("\n\n");
 
         prompt.append("APPLICATION DETAILS:\n");
-        if (companyName != null) prompt.append("Company: ").append(companyName).append("\n");
-        if (positionTitle != null) prompt.append("Position: ").append(positionTitle).append("\n");
-        if (applicantName != null) prompt.append("Applicant: ").append(applicantName).append("\n");
-        if (contactInfo != null) prompt.append("Contact: ").append(contactInfo).append("\n");
+        if (companyName != null) {
+            prompt.append("Company: ").append(companyName).append("\n");
+        }
+        if (positionTitle != null) {
+            prompt.append("Position: ").append(positionTitle).append("\n");
+        }
+        if (applicantName != null) {
+            prompt.append("Applicant: ").append(applicantName).append("\n");
+        }
+        if (contactInfo != null) {
+            prompt.append("Contact: ").append(contactInfo).append("\n");
+        }
         prompt.append("\n");
 
         prompt.append("COVER LETTER STRATEGY:\n");
@@ -278,7 +285,8 @@ public class CoverLetterService {
     }
 
     /**
-     * Build prompt for generating complementary cover letter based on existing CV
+     * Build prompt for generating complementary cover letter based on existing
+     * CV
      */
     private String buildComplementaryPrompt(String cvLatexContent, String jobDescription,
             String companyName, String positionTitle) {
