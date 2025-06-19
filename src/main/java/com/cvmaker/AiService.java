@@ -91,9 +91,9 @@ public class AiService {
     /**
      * Generate a complete LaTeX CV directly with enhanced progress tracking
      */
-    public String generateDirectLatexCV(String unstructuredText, String referenceTemplate, String jobDescription) {
+    public String generateDirectLatexCV(String unstructuredText, String referenceTemplate, String jobDescription, String ai_prompt) {
         try {
-            String prompt = buildDirectLatexGenerationPrompt(unstructuredText, referenceTemplate, jobDescription);
+            String prompt = buildDirectLatexGenerationPrompt(unstructuredText, referenceTemplate, jobDescription, ai_prompt);
             String response = queryWithProgress(prompt);
             String result = extractLatexFromResponse(response);
             return result;
@@ -111,19 +111,19 @@ public class AiService {
                 long elapsed = System.currentTimeMillis() - startTime;
 
                 if (elapsed > 5000) {
-                    System.out.printf("\r   ΓÅ│ AI processing... (%ds elapsed)   ", elapsed / 1000);
+                    System.out.printf("\r   │ AI processing... (%ds elapsed)   ", elapsed / 1000);
                 }
 
                 if (elapsed > 30000) {
-                    System.out.printf("\r   ≡ƒºá Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
+                    System.out.printf("\r   | Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
                 }
             }
 
-            System.out.print("\r   Γ£à AI operation completed!             \n");
+            System.out.print("\r   | AI operation completed!             \n");
             return future.get(60, TimeUnit.SECONDS);
 
         } catch (Exception e) {
-            System.out.print("\r   Γ¥î AI operation failed!               \n");
+            System.out.print("\r   | AI operation failed!               \n");
             throw new RuntimeException("AI operation timed out or failed: " + e.getMessage(), e);
         }
     }
@@ -161,15 +161,10 @@ public class AiService {
         }
     }
 
-    private String buildDirectLatexGenerationPrompt(String userData, String latexTemplate, String jobDescription) {
+    private String buildDirectLatexGenerationPrompt(String userData, String latexTemplate, String jobDescription, String ai_prompt) {
         StringBuilder prompt = new StringBuilder();
 
-        prompt.append("You are an elite CV writer and a LaTeX expert. Your job is to craft a compelling, tailored CV for a top-tier job application, using the provided LaTeX template. ");
-        prompt.append("Your output must be precise, achievement-focused, and highly relevant to the specific job and company—no generic or exaggerated claims, no filler, no buzzwords. ");
-        prompt.append("Every line must show clear, concrete value, using only the candidate's real experience and verifiable achievements. ");
-        prompt.append("Never fabricate or embellish. Only include content that is truthful, evidence-based, and directly relevant.\n\n");
-
-        // Deep analysis of the job description
+        prompt.append(ai_prompt);
         if (jobDescription != null && !jobDescription.trim().isEmpty()) {
             prompt.append("JOB DESCRIPTION:\n");
             prompt.append(jobDescription).append("\n\n");
@@ -184,20 +179,6 @@ public class AiService {
             prompt.append("LATEX TEMPLATE:\n");
             prompt.append(latexTemplate).append("\n\n");
         }
-
-        prompt.append("INSTRUCTIONS:\n");
-        prompt.append("1. Analyze the job description to understand the company's true priorities and what would impress a top decision-maker.\n");
-        prompt.append("2. Carefully review the candidate information. Select only the most significant, measurable, and relevant achievements. If you can truthfully infer additional relevant impact, do so—but never invent or exaggerate.\n");
-        prompt.append("3. For each section, include only what directly matches the job requirements and would be valued by a hiring manager. Omit everything else.\n");
-        prompt.append("4. Use action-driven, specific language. Quantify achievements (with numbers, percentages, or tangible results) wherever possible.\n");
-        prompt.append("5. Avoid all weak, vague, or cliché phrases hiring managers dislike: do NOT use words like 'responsible for', 'hard worker', 'team player', 'detail-oriented', 'self-motivated', 'results-driven', 'go-getter', 'people person', or similar. Never use buzzwords, empty adjectives, or filler. \n");
-        prompt.append("6. Instead, use concise, evidence-based sentences that demonstrate real impact, ownership, and results. Begin each bullet or line with a strong action verb that shows direct contribution (examples: 'Increased', 'Led', 'Designed', 'Optimized', 'Reduced', 'Launched', 'Developed', 'Generated', 'Streamlined', 'Built', 'Improved').\n");
-        prompt.append("7. Ensure the CV tells a clear story of high impact and fit for the specific role. Each line must answer the question: 'How did this person drive results or solve key problems relevant to this job?'\n");
-        prompt.append("8. Output ONLY a complete, ready-to-compile LaTeX CV using the provided template and structure. Do NOT include markdown, explanations, or commentary. Sections not relevant should be omitted or left empty as the template allows.\n");
-        prompt.append("9. The result must be visually clean, ATS-friendly, and professional, using only the given LaTeX formatting and structure. No extra formatting or code.\n\n");
-
-        prompt.append("FINAL OUTPUT:\n");
-        prompt.append("Return ONLY the complete LaTeX CV code, ready for compilation. No markdown, no explanations, no commentary. No extra content.\n");
 
         return prompt.toString();
     }

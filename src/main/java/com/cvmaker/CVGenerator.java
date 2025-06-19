@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
+import com.cvmaker.configuration.ConfigManager;
+
 public class CVGenerator {
 
     private final TemplateLoader templateLoader;
@@ -44,25 +46,12 @@ public class CVGenerator {
     /**
      * Main CV generation method - now AI-only
      */
-    public void generateCV(String userDataPath, String templateName, String outputDir, String outputPdfName) throws Exception {
+    public void generateCV(String templateName, String outputDir, String outputPdfName) throws Exception {
         // Redirect to AI generation since we only support that now
-        generateCVFromText(userDataPath, templateName, outputDir, outputPdfName, null);
+        generateCVFromText(templateName, outputDir, outputPdfName);
     }
 
-    public void generateCVFromText(String unstructuredTextPath, String templateName,
-            String outputDir, String outputPdfName, String jobDescriptionPath) throws Exception {
-
-        System.out.println("Loading input files...");
-        String unstructuredText = Files.readString(Paths.get(unstructuredTextPath));
-
-        String jobDescription = "";
-        if (jobDescriptionPath != null && !jobDescriptionPath.trim().isEmpty()) {
-            try {
-                jobDescription = Files.readString(Paths.get(jobDescriptionPath));
-            } catch (IOException e) {
-                System.out.println("Warning: Could not load job description file.");
-            }
-        }
+    public void generateCVFromText(String templateName, String outputDir, String outputPdfName) throws Exception {
 
         System.out.println("Loading template...");
         String referenceTemplate = null;
@@ -75,7 +64,7 @@ public class CVGenerator {
         }
 
         System.out.println("Generating LaTeX with AI...");
-        String generatedLatex = aiService.generateDirectLatexCV(unstructuredText, referenceTemplate, jobDescription);
+        String generatedLatex = aiService.generateDirectLatexCV(config.getUserDataContent(), referenceTemplate, config.getJobDescriptionContent(), config.getCvPromptContent());
 
         System.out.println("Saving files...");
         Path outputDirPath = Paths.get(outputDir);
@@ -158,15 +147,10 @@ public class CVGenerator {
             throw new IllegalStateException("No configuration loaded. Please provide a ConfigManager instance.");
         }
 
-        config.validateConfiguration();
-
-        // Always use AI generation since that's the only mode we support now
         generateCVFromText(
-                config.getUserDataFile(),
                 config.getTemplateName(),
                 config.getOutputDirectory(),
-                config.getOutputPdfName(),
-                config.getJobDescriptionFile()
+                config.getOutputPdfName()
         );
     }
 
@@ -236,13 +220,6 @@ public class CVGenerator {
             Files.createDirectories(outputDirPath);
             Path texOutputPath = outputDirPath.resolve("generated_cover_letter.tex");
             Files.writeString(texOutputPath, generatedLatex);
-
-            // Optional debug file saving
-            if (config.shouldSaveDebugFiles()) {
-                Path debugTexPath = outputDirPath.resolve("debug_ai_cover_letter.tex");
-                Files.writeString(debugTexPath, generatedLatex);
-                System.out.println("≡ƒôä Debug LaTeX saved to: " + debugTexPath);
-            }
 
             compileLatexWithProgress(outputDirPath, texOutputPath, config.getCoverLetterPdfName());
 

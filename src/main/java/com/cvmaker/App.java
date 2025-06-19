@@ -2,6 +2,8 @@ package com.cvmaker;
 
 import java.nio.file.Paths;
 
+import com.cvmaker.configuration.ConfigManager;
+
 public class App {
 
     public static void main(String[] args) {
@@ -11,17 +13,13 @@ public class App {
             // Load configuration
             System.out.println("Loading configuration...");
             ConfigManager config = new ConfigManager();
-            config.printConfiguration();
+            System.out.println(config);
 
             // Initialize components
             System.out.println("Initializing AI and template systems...");
             TemplateLoader loader = new TemplateLoader(Paths.get(config.getTemplateDirectory()));
             AiService aiService = new AiService(config.getAiModel(), config.getAiTemperature());
             CVGenerator generator = new CVGenerator(loader, aiService, config);
-
-            // Validate configuration
-            System.out.println("Validating configuration...");
-            config.validateConfiguration();
 
             // Generate CV using AI
             System.out.println("Starting CV generation...");
@@ -47,11 +45,9 @@ public class App {
         long startTime = System.currentTimeMillis();
 
         generator.generateCVFromText(
-                config.getUserDataFile(),
                 config.getTemplateName(),
                 config.getOutputDirectory(),
-                config.getOutputPdfName(),
-                config.getJobDescriptionFile()
+                config.getOutputPdfName()
         );
 
         long endTime = System.currentTimeMillis();
