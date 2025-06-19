@@ -3,63 +3,6 @@ const path = require('path');
 
 // Define the new modular file structure
 const fileStructure = [
-    // Application Layer
-    'src/main/java/com/cvmaker/application/CVMakerApplication.java',
-    'src/main/java/com/cvmaker/application/CVGenerationOrchestrator.java',
-    'src/main/java/com/cvmaker/application/CoverLetterOrchestrator.java',
-
-    // Domain Layer - CV
-    'src/main/java/com/cvmaker/domain/cv/CVGenerator.java',
-    'src/main/java/com/cvmaker/domain/cv/CVContent.java',
-    'src/main/java/com/cvmaker/domain/cv/CVTemplate.java',
-
-    // Domain Layer - Cover Letter
-    'src/main/java/com/cvmaker/domain/coverletter/CoverLetterGenerator.java',
-    'src/main/java/com/cvmaker/domain/coverletter/CoverLetterContent.java',
-
-    // Domain Layer - Shared
-    'src/main/java/com/cvmaker/domain/shared/ContentAnalyzer.java',
-    'src/main/java/com/cvmaker/domain/shared/JobDescription.java',
-
-    // Infrastructure Layer - AI
-    'src/main/java/com/cvmaker/infrastructure/ai/OpenAIService.java',
-    'src/main/java/com/cvmaker/infrastructure/ai/AIPromptBuilder.java',
-    'src/main/java/com/cvmaker/infrastructure/ai/AIResponseParser.java',
-
-    // Infrastructure Layer - LaTeX
-    'src/main/java/com/cvmaker/infrastructure/latex/LaTeXCompiler.java',
-    'src/main/java/com/cvmaker/infrastructure/latex/LaTeXValidator.java',
-
-    // Infrastructure Layer - FileSystem
-    'src/main/java/com/cvmaker/infrastructure/filesystem/FileSystemService.java',
-    'src/main/java/com/cvmaker/infrastructure/filesystem/TemplateRepository.java',
-
-    // Infrastructure Layer - Console
-    'src/main/java/com/cvmaker/infrastructure/console/ConsoleProgressReporter.java',
-    'src/main/java/com/cvmaker/infrastructure/console/ConsoleUIService.java',
-
-    // Infrastructure Layer - Progress
-    'src/main/java/com/cvmaker/infrastructure/progress/ProgressReporter.java',
-    'src/main/java/com/cvmaker/infrastructure/progress/ProgressEvent.java',
-
-    // Configuration
-    'src/main/java/com/cvmaker/config/ApplicationSettings.java',
-    'src/main/java/com/cvmaker/config/SettingsBuilder.java',
-    'src/main/java/com/cvmaker/config/SettingsValidator.java',
-
-    // Shared - Exceptions
-    'src/main/java/com/cvmaker/shared/exceptions/CVGenerationException.java',
-    'src/main/java/com/cvmaker/shared/exceptions/TemplateException.java',
-    'src/main/java/com/cvmaker/shared/exceptions/AIServiceException.java',
-
-    // Shared - Validation
-    'src/main/java/com/cvmaker/shared/validation/ValidationResult.java',
-    'src/main/java/com/cvmaker/shared/validation/Validator.java',
-
-    // Service Layer (if needed)
-    'src/main/java/com/cvmaker/service/ServiceContainer.java',
-    'src/main/java/com/cvmaker/service/AsyncTaskExecutor.java',
-    'src/main/java/com/cvmaker/service/RetryService.java'
 ];
 
 function createFile(filePath) {

@@ -50,14 +50,11 @@ public class AiService {
     }
 
     public String query(String prompt) {
-        return queryWithProgress(prompt, null);
+        return queryWithProgress(prompt);
     }
 
-    public String queryWithProgress(String prompt, String operationDescription) {
+    public String queryWithProgress(String prompt) {
         try {
-            if (operationDescription != null) {
-                showAIOperationProgress(operationDescription);
-            }
 
             ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
                     .addUserMessage(prompt)
@@ -73,13 +70,11 @@ public class AiService {
                 }
             }, executorService);
 
-            ChatCompletion completion = waitForCompletionWithProgress(future, operationDescription);
+            ChatCompletion completion = waitForCompletionWithProgress(future);
 
-            if (completion.usage() != null) {
-                var usage = completion.usage().get();
-                System.out.printf("≡ƒöó Token usage - Prompt: %d, Completion: %d, Total: %d\n",
-                        usage.promptTokens(), usage.completionTokens(), usage.totalTokens());
-            }
+            var usage = completion.usage().get();
+            System.out.printf("≡ƒöó Token usage - Prompt: %d, Completion: %d, Total: %d\n",
+                    usage.promptTokens(), usage.completionTokens(), usage.totalTokens());
 
             Optional<String> responseContent = completion.choices().get(0).message().content();
 
@@ -88,7 +83,7 @@ public class AiService {
             }
 
             return responseContent.get();
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             throw new RuntimeException("Error while querying OpenAI API", e);
         }
     }
@@ -98,35 +93,16 @@ public class AiService {
      */
     public String generateDirectLatexCV(String unstructuredText, String referenceTemplate, String jobDescription) {
         try {
-            ProgressTracker cvProgress = ProgressTracker.create("AI LaTeX CV Generation", 4);
-
-            cvProgress.nextStep("Analyzing CV content and requirements");
-            Thread.sleep(500);
-
-            cvProgress.nextStep("Processing job description and tailoring content");
-            Thread.sleep(500);
-
-            cvProgress.startStep("Generating complete LaTeX document");
             String prompt = buildDirectLatexGenerationPrompt(unstructuredText, referenceTemplate, jobDescription);
-            String response = queryWithProgress(prompt, "Creating professional LaTeX CV document");
-            cvProgress.completeStep("LaTeX document generated successfully");
-
-            cvProgress.nextStep("Finalizing CV formatting and structure");
+            String response = queryWithProgress(prompt);
             String result = extractLatexFromResponse(response);
-
-            cvProgress.complete();
             return result;
-
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate LaTeX CV: " + e.getMessage(), e);
         }
     }
 
-    private void showAIOperationProgress(String operation) {
-        System.out.printf("≡ƒñû AI Operation: %s\n", operation);
-    }
-
-    private ChatCompletion waitForCompletionWithProgress(CompletableFuture<ChatCompletion> future, String operation) {
+    private ChatCompletion waitForCompletionWithProgress(CompletableFuture<ChatCompletion> future) {
         try {
             long startTime = System.currentTimeMillis();
 

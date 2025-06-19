@@ -2,6 +2,7 @@ package com.cvmaker;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -76,22 +77,12 @@ public class CoverLetterService {
     public String generateDirectLatexCoverLetter(String cvContent, String jobDescription,
             String companyName, String positionTitle, String applicantName, String contactInfo) {
         try {
-            // Show detailed progress for this complex operation
-            ProgressTracker coverLetterProgress = ProgressTracker.create("AI Cover Letter Generation", 4);
-
-            coverLetterProgress.nextStep("Analyzing CV content and job requirements");
-            coverLetterProgress.nextStep("Identifying key qualifications and achievements");
-
-            coverLetterProgress.startStep("Generating personalized cover letter content");
             String prompt = buildCoverLetterGenerationPrompt(cvContent, jobDescription,
                     companyName, positionTitle, applicantName, contactInfo);
             String response = queryWithProgress(prompt, "Creating professional cover letter");
-            coverLetterProgress.completeStep("Cover letter content generated successfully");
 
-            coverLetterProgress.nextStep("Finalizing cover letter formatting and structure");
             String result = extractLatexFromResponse(response);
 
-            coverLetterProgress.complete();
             return result;
 
         } catch (Exception e) {
@@ -122,7 +113,7 @@ public class CoverLetterService {
             String contactInfo, CoverLetterStyle style) {
         try {
             String prompt = buildStyledPrompt(cvContent, jobDescription, companyName,
-                    positionTitle, applicantName, contactInfo, style);
+                    positionTitle, applicantName, style);
             String response = queryWithProgress(prompt, "Creating " + style.getDescription() + " cover letter");
             return extractLatexFromResponse(response);
         } catch (Exception e) {
@@ -169,14 +160,12 @@ public class CoverLetterService {
             }, executorService);
 
             // Wait for completion with progress updates
-            ChatCompletion completion = waitForCompletionWithProgress(future, operationDescription);
+            ChatCompletion completion = waitForCompletionWithProgress(future);
 
             // Extract and log token usage
-            if (completion.usage() != null) {
-                var usage = completion.usage().get();
-                System.out.printf("🔤 Token usage - Prompt: %d, Completion: %d, Total: %d\n",
-                        usage.promptTokens(), usage.completionTokens(), usage.totalTokens());
-            }
+            var usage = completion.usage().get();
+            System.out.printf("🔤 Token usage - Prompt: %d, Completion: %d, Total: %d\n",
+                    usage.promptTokens(), usage.completionTokens(), usage.totalTokens());
 
             // Extract the response content
             Optional<String> responseContent = completion.choices().get(0).message().content();
@@ -186,7 +175,7 @@ public class CoverLetterService {
             }
 
             return responseContent.get();
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             throw new RuntimeException("Error while querying OpenAI API", e);
         }
     }
@@ -323,10 +312,55 @@ public class CoverLetterService {
     }
 
     /**
+     * Build prompt for cover letter strategy analysis
+     */
+    private String buildAnalysisPrompt(String jobDescription, String cvContent) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append("You are a career strategy expert. Analyze the job description and candidate background ");
+        prompt.append("to provide strategic recommendations for an effective cover letter.\n\n");
+
+        prompt.append("JOB DESCRIPTION:\n")
+                .append(jobDescription)
+                .append("\n\n");
+
+        prompt.append("CANDIDATE BACKGROUND:\n")
+                .append(cvContent)
+                .append("\n\n");
+
+        prompt.append("ANALYSIS FRAMEWORK:\n");
+        prompt.append("1. KEY REQUIREMENTS ANALYSIS:\n");
+        prompt.append("   • Identify must-have vs. nice-to-have qualifications\n");
+        prompt.append("   • Highlight critical skills and experience areas\n");
+        prompt.append("   • Note any gaps or stretch requirements\n\n");
+
+        prompt.append("2. CANDIDATE STRENGTH MAPPING:\n");
+        prompt.append("   • Match candidate experience to job requirements\n");
+        prompt.append("   • Identify standout qualifications and achievements\n");
+        prompt.append("   • Highlight unique value propositions\n\n");
+
+        prompt.append("3. COVER LETTER STRATEGY:\n");
+        prompt.append("   • Recommend key points to emphasize\n");
+        prompt.append("   • Suggest specific examples to include\n");
+        prompt.append("   • Identify potential concerns to address\n");
+        prompt.append("   • Recommend optimal tone and approach\n\n");
+
+        prompt.append("4. COMPANY RESEARCH SUGGESTIONS:\n");
+        prompt.append("   • Key areas to research about the company\n");
+        prompt.append("   • Potential connection points to mention\n");
+        prompt.append("   • Industry trends to reference\n\n");
+
+        prompt.append("Provide a comprehensive analysis with specific, actionable recommendations.\n\n");
+        prompt.append("COVER LETTER STRATEGY ANALYSIS:");
+
+        return prompt.toString();
+    }
+
+    /**
      * Build prompt for styled cover letter generation
      */
     private String buildStyledPrompt(String cvContent, String jobDescription, String companyName,
-            String positionTitle, String applicantName, String contactInfo, CoverLetterStyle style) {
+            String positionTitle, String applicantName, CoverLetterStyle style) {
         StringBuilder prompt = new StringBuilder();
 
         prompt.append("You are an expert cover letter writer specializing in different communication styles. ");
@@ -390,51 +424,6 @@ public class CoverLetterService {
     }
 
     /**
-     * Build prompt for cover letter strategy analysis
-     */
-    private String buildAnalysisPrompt(String jobDescription, String cvContent) {
-        StringBuilder prompt = new StringBuilder();
-
-        prompt.append("You are a career strategy expert. Analyze the job description and candidate background ");
-        prompt.append("to provide strategic recommendations for an effective cover letter.\n\n");
-
-        prompt.append("JOB DESCRIPTION:\n")
-                .append(jobDescription)
-                .append("\n\n");
-
-        prompt.append("CANDIDATE BACKGROUND:\n")
-                .append(cvContent)
-                .append("\n\n");
-
-        prompt.append("ANALYSIS FRAMEWORK:\n");
-        prompt.append("1. KEY REQUIREMENTS ANALYSIS:\n");
-        prompt.append("   • Identify must-have vs. nice-to-have qualifications\n");
-        prompt.append("   • Highlight critical skills and experience areas\n");
-        prompt.append("   • Note any gaps or stretch requirements\n\n");
-
-        prompt.append("2. CANDIDATE STRENGTH MAPPING:\n");
-        prompt.append("   • Match candidate experience to job requirements\n");
-        prompt.append("   • Identify standout qualifications and achievements\n");
-        prompt.append("   • Highlight unique value propositions\n\n");
-
-        prompt.append("3. COVER LETTER STRATEGY:\n");
-        prompt.append("   • Recommend key points to emphasize\n");
-        prompt.append("   • Suggest specific examples to include\n");
-        prompt.append("   • Identify potential concerns to address\n");
-        prompt.append("   • Recommend optimal tone and approach\n\n");
-
-        prompt.append("4. COMPANY RESEARCH SUGGESTIONS:\n");
-        prompt.append("   • Key areas to research about the company\n");
-        prompt.append("   • Potential connection points to mention\n");
-        prompt.append("   • Industry trends to reference\n\n");
-
-        prompt.append("Provide a comprehensive analysis with specific, actionable recommendations.\n\n");
-        prompt.append("COVER LETTER STRATEGY ANALYSIS:");
-
-        return prompt.toString();
-    }
-
-    /**
      * Show progress for AI operations with spinner and status updates
      */
     private void showAIOperationProgress(String operation) {
@@ -444,28 +433,33 @@ public class CoverLetterService {
     /**
      * Wait for AI completion with progress updates
      */
-    private ChatCompletion waitForCompletionWithProgress(CompletableFuture<ChatCompletion> future, String operation) {
+    private ChatCompletion waitForCompletionWithProgress(CompletableFuture<ChatCompletion> future) {
         try {
             // Show progress while waiting
             long startTime = System.currentTimeMillis();
 
-            while (!future.isDone()) {
-                Thread.sleep(1000);
-                long elapsed = System.currentTimeMillis() - startTime;
+            while (true) {
+                try {
+                    return future.get(1, TimeUnit.SECONDS);
+                } catch (java.util.concurrent.TimeoutException te) {
+                    long elapsed = System.currentTimeMillis() - startTime;
 
-                if (elapsed > 5000) { // After 5 seconds, show time elapsed
-                    System.out.printf("\r   ⏳ AI processing... (%ds elapsed)   ", elapsed / 1000);
-                }
+                    if (elapsed > 5000) { // After 5 seconds, show time elapsed
+                        System.out.printf("\r   ⏳ AI processing... (%ds elapsed)   ", elapsed / 1000);
+                    }
 
-                if (elapsed > 30000) { // After 30 seconds, show extended message
-                    System.out.printf("\r   🔄 Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
+                    if (elapsed > 30000) { // After 30 seconds, show extended message
+                        System.out.printf("\r   🔄 Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
+                    }
+
+                    if (elapsed > 60000) { // 60 second timeout
+                        System.out.print("\r   ❌ AI operation failed!               \n");
+                        throw new RuntimeException("AI operation timed out after 60 seconds.");
+                    }
                 }
             }
 
-            System.out.print("\r   ✅ AI operation completed!             \n");
-            return future.get(60, TimeUnit.SECONDS); // 60 second timeout
-
-        } catch (Exception e) {
+        } catch (InterruptedException | RuntimeException | ExecutionException e) {
             System.out.print("\r   ❌ AI operation failed!               \n");
             throw new RuntimeException("AI operation timed out or failed: " + e.getMessage(), e);
         }
