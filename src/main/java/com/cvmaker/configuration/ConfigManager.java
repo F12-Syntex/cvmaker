@@ -22,6 +22,7 @@ public class ConfigManager {
     private String templateDirectory;
 
     private String userDataFile;
+    private String jobUrl; // New field for job URL
     private String jobDescriptionFile;
     private String cvPromptFile;
     private String coverLetterPromptFile;
@@ -54,6 +55,34 @@ public class ConfigManager {
         loadConfiguration(configFilePath);
     }
 
+    // Constructor for programmatic configuration with job URL
+    public ConfigManager(String jobUrl, String userDataFile, String cvPromptFile, String coverLetterPromptFile) throws IOException {
+        // Set defaults
+        this.templateName = "classic";
+        this.templateDirectory = "templates";
+        this.outputDirectory = "generation";
+        this.outputPdfName = "cv.pdf";
+        this.coverLetterPdfName = "cover_letter.pdf";
+        this.aiModel = ChatModel.GPT_4_1_MINI;
+        this.aiTemperature = 0.3;
+        this.saveGeneratedLatex = false;
+        this.saveAiResponses = false;
+        this.generateCoverLetter = true;
+        this.aiRequestDelayMs = 1000;
+        this.aiMaxRetries = 3;
+        this.aiTimeoutSeconds = 60;
+        
+        // Set provided values
+        this.jobUrl = jobUrl;
+        this.userDataFile = userDataFile;
+        this.cvPromptFile = cvPromptFile;
+        this.coverLetterPromptFile = coverLetterPromptFile;
+        this.jobDescriptionFile = ""; // Will be populated from URL
+        
+        // Load file contents
+        loadFileContents();
+    }
+
     private void loadTemplateSettings(Properties properties) {
         this.templateName = properties.getProperty("template.name", "classic");
         this.templateDirectory = properties.getProperty("template.directory", "templates");
@@ -61,16 +90,17 @@ public class ConfigManager {
 
     private void loadInputSettings(Properties properties) {
         this.userDataFile = properties.getProperty("input.user.data.file", "userdata.txt");
+        this.jobUrl = properties.getProperty("input.job.url", "").trim(); // New property
         this.jobDescriptionFile = properties.getProperty("input.job.description.file", "").trim();
         this.cvPromptFile = properties.getProperty("input.cv.prompt.file", "cv_prompt.txt");
         this.coverLetterPromptFile = properties.getProperty("input.cover.letter.prompt.file", "cover_letter_prompt.txt");
     }
 
     private void loadOutputSettings(Properties properties) {
-        this.outputDirectory = properties.getProperty("output.directory", "target");
-        this.outputPdfName = properties.getProperty("output.pdf.name", "generated_cv.pdf");
-        this.coverLetterPdfName = properties.getProperty("output.cover.letter.pdf.name", "generated_cover_letter.pdf");
-        this.generateCoverLetter = Boolean.parseBoolean(properties.getProperty("output.generate.cover.letter", "false"));
+        this.outputDirectory = properties.getProperty("output.directory", "generation");
+        this.outputPdfName = properties.getProperty("output.pdf.name", "cv.pdf");
+        this.coverLetterPdfName = properties.getProperty("output.cover.letter.pdf.name", "cover_letter.pdf");
+        this.generateCoverLetter = Boolean.parseBoolean(properties.getProperty("output.generate.cover.letter", "true"));
     }
 
     private void loadAiSettings(Properties properties) {
@@ -95,7 +125,7 @@ public class ConfigManager {
     }
 
     private void loadDebugSettings(Properties properties) {
-        this.saveGeneratedLatex = Boolean.parseBoolean(properties.getProperty("debug.save.generated.latex", "true"));
+        this.saveGeneratedLatex = Boolean.parseBoolean(properties.getProperty("debug.save.generated.latex", "false"));
         this.saveAiResponses = Boolean.parseBoolean(properties.getProperty("debug.save.ai.responses", "false"));
     }
 
@@ -140,8 +170,8 @@ public class ConfigManager {
             throw new IOException("User data file not found: " + userDataFile);
         }
 
-        // Load job description content if file exists
-        if (!jobDescriptionFile.isEmpty()) {
+        // Load job description content if file exists (skip if using URL)
+        if (!jobDescriptionFile.isEmpty() && jobUrl.isEmpty()) {
             Path jobDescPath = Paths.get(jobDescriptionFile);
             if (Files.exists(jobDescPath)) {
                 jobDescriptionContent = Files.readString(jobDescPath);
@@ -149,6 +179,9 @@ public class ConfigManager {
                 System.out.println("Warning: Job description file not found: " + jobDescriptionFile);
                 jobDescriptionContent = "";
             }
+        } else if (!jobUrl.isEmpty()) {
+            // Job description will be fetched from URL
+            jobDescriptionContent = "";
         }
 
         // Load CV prompt content if file exists
@@ -172,6 +205,11 @@ public class ConfigManager {
         }
     }
 
+    // Method to set job description content (used when fetching from URL)
+    public void setJobDescriptionContent(String jobDescriptionContent) {
+        this.jobDescriptionContent = jobDescriptionContent;
+    }
+
     // Additional getters for file contents
     public String getUserDataContent() {
         return userDataContent;
@@ -192,5 +230,10 @@ public class ConfigManager {
     // Method to reload file contents
     public void reloadFileContents() throws IOException {
         loadFileContents();
+    }
+
+    // Check if job URL is provided
+    public boolean hasJobUrl() {
+        return jobUrl != null && !jobUrl.trim().isEmpty();
     }
 }
