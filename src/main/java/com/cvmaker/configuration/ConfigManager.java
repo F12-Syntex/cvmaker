@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Properties;
 
-import com.cvmaker.CoverLetterService;
 import com.openai.models.ChatModel;
 
 import lombok.Data;
@@ -44,7 +43,6 @@ public class ConfigManager {
     private int aiTimeoutSeconds;
 
     private String coverLetterPdfName;
-    private CoverLetterService.CoverLetterStyle coverLetterStyle;
 
     public ConfigManager() throws IOException {
         this(DEFAULT_CONFIG_FILE);
@@ -102,17 +100,6 @@ public class ConfigManager {
         this.aiTimeoutSeconds = Integer.parseInt(properties.getProperty("ai.timeout_seconds", "60"));
     }
 
-    private void loadCoverLetterSettings(Properties properties) {
-        this.coverLetterPdfName = properties.getProperty("output.cover_letter.pdf.name", "generated_cover_letter.pdf");
-        String style = properties.getProperty("cover_letter.style", "MODERN").toUpperCase();
-        try {
-            this.coverLetterStyle = CoverLetterService.CoverLetterStyle.valueOf(style);
-        } catch (IllegalArgumentException e) {
-            System.out.println("Warning: Invalid cover letter style '" + style + "', using MODERN");
-            this.coverLetterStyle = CoverLetterService.CoverLetterStyle.MODERN;
-        }
-    }
-
     private void loadConfiguration(String configFilePath) throws IOException {
         Properties properties = new Properties();
         Path configPath = Paths.get(configFilePath);
@@ -132,7 +119,6 @@ public class ConfigManager {
         loadAiSettings(properties);
         loadDebugSettings(properties);
         loadPerformanceSettings(properties);
-        loadCoverLetterSettings(properties);
 
         // Load file contents
         loadFileContents();
