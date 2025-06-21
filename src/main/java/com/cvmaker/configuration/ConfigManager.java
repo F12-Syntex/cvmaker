@@ -24,25 +24,27 @@ public class ConfigManager {
     private String userDataFile;
     private String jobDescriptionFile;
     private String cvPromptFile;
+    private String coverLetterPromptFile;
 
     private String userDataContent;
     private String jobDescriptionContent;
     private String cvPromptContent;
+    private String coverLetterPromptContent;
 
     private String outputDirectory;
     private String outputPdfName;
+    private String coverLetterPdfName;
 
     private ChatModel aiModel;
     private double aiTemperature;
 
     private boolean saveGeneratedLatex;
     private boolean saveAiResponses;
+    private boolean generateCoverLetter;
 
     private int aiRequestDelayMs;
     private int aiMaxRetries;
     private int aiTimeoutSeconds;
-
-    private String coverLetterPdfName;
 
     public ConfigManager() throws IOException {
         this(DEFAULT_CONFIG_FILE);
@@ -61,11 +63,14 @@ public class ConfigManager {
         this.userDataFile = properties.getProperty("input.user.data.file", "userdata.txt");
         this.jobDescriptionFile = properties.getProperty("input.job.description.file", "").trim();
         this.cvPromptFile = properties.getProperty("input.cv.prompt.file", "cv_prompt.txt");
+        this.coverLetterPromptFile = properties.getProperty("input.cover.letter.prompt.file", "cover_letter_prompt.txt");
     }
 
     private void loadOutputSettings(Properties properties) {
         this.outputDirectory = properties.getProperty("output.directory", "target");
         this.outputPdfName = properties.getProperty("output.pdf.name", "generated_cv.pdf");
+        this.coverLetterPdfName = properties.getProperty("output.cover.letter.pdf.name", "generated_cover_letter.pdf");
+        this.generateCoverLetter = Boolean.parseBoolean(properties.getProperty("output.generate.cover.letter", "false"));
     }
 
     private void loadAiSettings(Properties properties) {
@@ -154,6 +159,17 @@ public class ConfigManager {
             System.out.println("Warning: CV prompt file not found: " + cvPromptFile);
             cvPromptContent = "";
         }
+
+        // Load cover letter prompt content if file exists
+        Path coverLetterPromptPath = Paths.get(coverLetterPromptFile);
+        if (Files.exists(coverLetterPromptPath)) {
+            coverLetterPromptContent = Files.readString(coverLetterPromptPath);
+        } else {
+            if (generateCoverLetter) {
+                System.out.println("Warning: Cover letter prompt file not found: " + coverLetterPromptFile);
+            }
+            coverLetterPromptContent = "";
+        }
     }
 
     // Additional getters for file contents
@@ -167,6 +183,10 @@ public class ConfigManager {
 
     public String getCvPromptContent() {
         return cvPromptContent;
+    }
+
+    public String getCoverLetterPromptContent() {
+        return coverLetterPromptContent;
     }
 
     // Method to reload file contents

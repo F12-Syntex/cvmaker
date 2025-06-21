@@ -19,7 +19,7 @@ public class App {
             AiService aiService = new AiService(config.getAiModel(), config.getAiTemperature());
             CVGenerator generator = new CVGenerator(loader, aiService, config);
 
-            // Generate CV using AI
+            // Generate CV and cover letter using AI
             System.out.println("Starting CV generation...");
             generateWithAI(config, generator);
 
@@ -32,17 +32,28 @@ public class App {
     }
 
     private static void generateWithAI(ConfigManager config, CVGenerator generator) throws Exception {
-        System.out.println("Generating CV with AI...");
+        System.out.println("Generating documents with AI...");
         long startTime = System.currentTimeMillis();
 
+        // Generate CV
         generator.generateCVFromText(
                 config.getTemplateName(),
                 config.getOutputDirectory(),
                 config.getOutputPdfName()
         );
 
+        // Generate cover letter if enabled
+        if (config.isGenerateCoverLetter()) {
+            System.out.println("Generating cover letter...");
+            generator.generateCoverLetterFromText(
+                    config.getTemplateName(),
+                    config.getOutputDirectory(),
+                    config.getCoverLetterPdfName()
+            );
+        }
+
         long endTime = System.currentTimeMillis();
-        System.out.println("CV generation completed in " + formatDuration(endTime - startTime));
+        System.out.println("Document generation completed in " + formatDuration(endTime - startTime));
     }
 
     /**

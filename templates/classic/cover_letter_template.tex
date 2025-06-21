@@ -1,0 +1,84 @@
+\documentclass[11pt,a4paper]{letter}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+% Custom styling
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+
+% Color definitions
+\definecolor{darkblue}{RGB}{0,51,102}
+\definecolor{lightgray}{RGB}{128,128,128}
+
+% Header styling
+\newcommand{\cvheader}[6]{
+    \begin{center}
+        {\Large\bfseries\color{darkblue}#1 #2}\\[0.3em]
+        {\color{lightgray}#3}\\[0.2em]
+        {\small #4 | #5 | #6}
+    \end{center}
+    \vspace{1em}
+}
+
+% Date formatting
+\renewcommand{\today}{\ifcase\month\or
+  January\or February\or March\or April\or May\or June\or
+  July\or August\or September\or October\or November\or December\fi
+  \space\number\day, \number\year}
+
+\begin{document}
+
+% Header with contact information
+\cvheader{[FIRST_NAME]}{[LAST_NAME]}{[TITLE]}{[EMAIL]}{[PHONE]}{[LINKEDIN]}
+
+% Date
+\vspace{1em}
+\today
+
+% Recipient address
+\vspace{1.5em}
+\begin{flushleft}
+[HIRING_MANAGER_NAME]\\
+[COMPANY_NAME]\\
+[COMPANY_ADDRESS]\\
+[CITY_STATE_ZIP]
+\end{flushleft}
+
+% Salutation
+\vspace{1em}
+Dear [HIRING_MANAGER_TITLE] [HIRING_MANAGER_NAME],
+
+% Opening paragraph
+\vspace{1em}
+I am writing to express my strong interest in the [POSITION_TITLE] position at [COMPANY_NAME]. With [YEARS_EXPERIENCE] years of experience in [RELEVANT_FIELD] and a proven track record of [KEY_ACHIEVEMENT], I am excited about the opportunity to contribute to [COMPANY_NAME]'s continued success and growth.
+
+% Body paragraph 1 - Relevant experience
+\vspace{1em}
+In my current role as [CURRENT_POSITION] at [CURRENT_COMPANY], I have successfully [MAJOR_ACCOMPLISHMENT_1]. This experience has strengthened my expertise in [RELEVANT_SKILL_1] and [RELEVANT_SKILL_2], which directly align with the requirements outlined in your job posting. Additionally, my background in [RELEVANT_BACKGROUND] has equipped me with the technical skills and strategic thinking necessary to excel in this position.
+
+% Body paragraph 2 - Specific qualifications
+\vspace{1em}
+What particularly excites me about this opportunity is [COMPANY_SPECIFIC_INTEREST]. Your company's commitment to [COMPANY_VALUE/MISSION] resonates strongly with my professional values and career aspirations. I am eager to bring my experience in [SPECIFIC_SKILL/TECHNOLOGY] and my passion for [RELEVANT_PASSION] to help [COMPANY_NAME] achieve [SPECIFIC_COMPANY_GOAL].
+
+% Closing paragraph
+\vspace{1em}
+I would welcome the opportunity to discuss how my background in [RELEVANT_AREA] and my enthusiasm for [INDUSTRY/FIELD] can contribute to your team's success. Thank you for considering my application. I look forward to hearing from you soon and am available for an interview at your convenience.
+
+% Sign-off
+\vspace{1.5em}
+\begin{flushleft}
+Sincerely,\\
+\vspace{2em}
+[FIRST_NAME] [LAST_NAME]
+\end{flushleft}
+
+\end{document}

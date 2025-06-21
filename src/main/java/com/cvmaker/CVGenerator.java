@@ -79,6 +79,40 @@ public class CVGenerator {
     }
 
     /**
+     * Generate cover letter from text using AI
+     */
+    public void generateCoverLetterFromText(String templateName, String outputDir, String outputPdfName) throws Exception {
+        System.out.println("Loading cover letter template...");
+        String referenceTemplate = null;
+        if (templateName != null && !templateName.isEmpty()) {
+            try {
+                referenceTemplate = templateLoader.loadCoverLetterTex(templateName);
+            } catch (IOException e) {
+                System.out.println("No reference cover letter template found.");
+            }
+        }
+
+        System.out.println("Generating cover letter LaTeX with AI...");
+        String generatedLatex = aiService.generateDirectLatexCoverLetter(
+            config.getUserDataContent(), 
+            referenceTemplate, 
+            config.getJobDescriptionContent(), 
+            config.getCoverLetterPromptContent()
+        );
+
+        System.out.println("Saving cover letter files...");
+        Path outputDirPath = Paths.get(outputDir);
+        Files.createDirectories(outputDirPath);
+        Path texOutputPath = outputDirPath.resolve("generated_cover_letter.tex");
+        Files.writeString(texOutputPath, generatedLatex);
+
+        System.out.println("Compiling cover letter to PDF...");
+        compileLatexWithProgress(outputDirPath, texOutputPath, outputPdfName);
+
+        System.out.println("Cover letter generation completed.");
+    }
+
+    /**
      * Compile LaTeX to PDF with progress tracking
      */
     private void compileLatexWithProgress(Path dir, Path texFile, String outputPdfName) throws IOException, InterruptedException {
@@ -155,6 +189,38 @@ public class CVGenerator {
     }
 
     /**
+     * Generate cover letter using configuration settings
+     */
+    public void generateCoverLetterFromConfig() throws Exception {
+        if (config == null) {
+            throw new IllegalStateException("No configuration loaded. Please provide a ConfigManager instance.");
+        }
+
+        generateCoverLetterFromText(
+                config.getTemplateName(),
+                config.getOutputDirectory(),
+                config.getCoverLetterPdfName()
+        );
+    }
+
+    /**
+     * Generate both CV and cover letter using configuration settings
+     */
+    public void generateBothFromConfig() throws Exception {
+        if (config == null) {
+            throw new IllegalStateException("No configuration loaded. Please provide a ConfigManager instance.");
+        }
+
+        // Generate CV
+        generateCVFromConfig();
+        
+        // Generate cover letter if enabled
+        if (config.isGenerateCoverLetter()) {
+            generateCoverLetterFromConfig();
+        }
+    }
+
+    /**
      * Get the current configuration manager
      */
     public ConfigManager getConfig() {
@@ -181,5 +247,4 @@ public class CVGenerator {
     public TemplateLoader getTemplateLoader() {
         return templateLoader;
     }
-
 }

@@ -73,7 +73,7 @@ public class AiService {
             ChatCompletion completion = waitForCompletionWithProgress(future);
 
             var usage = completion.usage().get();
-            System.out.printf("≡ƒöó Token usage - Prompt: %d, Completion: %d, Total: %d\n",
+            System.out.printf("📊 Token usage - Prompt: %d, Completion: %d, Total: %d\n",
                     usage.promptTokens(), usage.completionTokens(), usage.totalTokens());
 
             Optional<String> responseContent = completion.choices().get(0).message().content();
@@ -102,6 +102,20 @@ public class AiService {
         }
     }
 
+    /**
+     * Generate a complete LaTeX cover letter with enhanced progress tracking
+     */
+    public String generateDirectLatexCoverLetter(String unstructuredText, String referenceTemplate, String jobDescription, String coverLetterPrompt) {
+        try {
+            String prompt = buildDirectLatexCoverLetterPrompt(unstructuredText, referenceTemplate, jobDescription, coverLetterPrompt);
+            String response = queryWithProgress(prompt);
+            String result = extractLatexFromResponse(response);
+            return result;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate LaTeX cover letter: " + e.getMessage(), e);
+        }
+    }
+
     private ChatCompletion waitForCompletionWithProgress(CompletableFuture<ChatCompletion> future) {
         try {
             long startTime = System.currentTimeMillis();
@@ -111,19 +125,19 @@ public class AiService {
                 long elapsed = System.currentTimeMillis() - startTime;
 
                 if (elapsed > 5000) {
-                    System.out.printf("\r   │ AI processing... (%ds elapsed)   ", elapsed / 1000);
+                    System.out.printf("\r   🤖 AI processing... (%ds elapsed)   ", elapsed / 1000);
                 }
 
                 if (elapsed > 30000) {
-                    System.out.printf("\r   | Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
+                    System.out.printf("\r   ⏳ Complex AI operation in progress... (%ds elapsed)   ", elapsed / 1000);
                 }
             }
 
-            System.out.print("\r   | AI operation completed!             \n");
+            System.out.print("\r   ✅ AI operation completed!             \n");
             return future.get(60, TimeUnit.SECONDS);
 
         } catch (Exception e) {
-            System.out.print("\r   | AI operation failed!               \n");
+            System.out.print("\r   ❌ AI operation failed!               \n");
             throw new RuntimeException("AI operation timed out or failed: " + e.getMessage(), e);
         }
     }
@@ -183,4 +197,26 @@ public class AiService {
         return prompt.toString();
     }
 
+    private String buildDirectLatexCoverLetterPrompt(String userData, String latexTemplate, String jobDescription, String coverLetterPrompt) {
+        StringBuilder prompt = new StringBuilder();
+
+        prompt.append(coverLetterPrompt);
+
+        if (jobDescription != null && !jobDescription.trim().isEmpty()) {
+            prompt.append("JOB DESCRIPTION:\n");
+            prompt.append(jobDescription).append("\n\n");
+        }
+
+        // Candidate data
+        prompt.append("CANDIDATE INFORMATION:\n");
+        prompt.append(userData).append("\n\n");
+
+        // Reference template
+        if (latexTemplate != null && !latexTemplate.trim().isEmpty()) {
+            prompt.append("LATEX COVER LETTER TEMPLATE:\n");
+            prompt.append(latexTemplate).append("\n\n");
+        }
+
+        return prompt.toString();
+    }
 }
