@@ -155,8 +155,6 @@ public class CVGenerator {
             boolean pdfExists = Files.exists(pdfPath);
 
             if (exitCode != 0 && !pdfExists) {
-                System.err.println("LaTeX output:");
-                System.err.println(output.toString());
                 throw new RuntimeException("LaTeX compilation failed");
             }
 

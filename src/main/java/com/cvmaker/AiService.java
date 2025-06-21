@@ -145,17 +145,33 @@ public class AiService {
     private String extractLatexFromResponse(String response) {
         String cleaned = response.trim();
 
-        if (cleaned.startsWith("```latex") || cleaned.startsWith("```tex")) {
+        // Handle code blocks more comprehensively
+        if (cleaned.startsWith("```")) {
+            // Find the first newline after opening ```
             int firstNewline = cleaned.indexOf('\n');
             if (firstNewline != -1) {
                 cleaned = cleaned.substring(firstNewline + 1);
             }
+
+            // Remove closing ```
+            if (cleaned.endsWith("```")) {
+                cleaned = cleaned.substring(0, cleaned.lastIndexOf("```"));
+            }
         }
-        if (cleaned.startsWith("```")) {
-            cleaned = cleaned.substring(3);
-        }
-        if (cleaned.endsWith("```")) {
-            cleaned = cleaned.substring(0, cleaned.length() - 3);
+
+        // Remove any remaining markdown artifacts
+        cleaned = cleaned.replaceAll("^```[a-zA-Z]*\\n?", "")
+                .replaceAll("```$", "");
+
+        // Remove excessive whitespace at the beginning
+        cleaned = cleaned.replaceAll("^\\s*\\n+", "");
+
+        // Ensure document starts with \documentclass
+        if (!cleaned.startsWith("\\documentclass")) {
+            int docStart = cleaned.indexOf("\\documentclass");
+            if (docStart > 0) {
+                cleaned = cleaned.substring(docStart);
+            }
         }
 
         return cleaned.trim();

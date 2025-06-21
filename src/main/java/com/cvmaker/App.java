@@ -11,7 +11,6 @@ public class App {
             // Load configuration
             System.out.println("Loading configuration...");
             ConfigManager config = new ConfigManager();
-            System.out.println(config);
 
             // Initialize components
             System.out.println("Initializing AI and template systems...");
@@ -41,7 +40,7 @@ public class App {
                 config.getOutputDirectory(),
                 config.getOutputPdfName()
         );
-
+        
         // Generate cover letter if enabled
         if (config.isGenerateCoverLetter()) {
             System.out.println("Generating cover letter...");
