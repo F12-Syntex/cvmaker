@@ -4,3 +4,7 @@
 helper.js
 *.txt
 github_downloader.log
+.env
+generation
+output
+tokens/StoredCredential

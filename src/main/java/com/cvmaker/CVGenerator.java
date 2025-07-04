@@ -10,6 +10,8 @@ import java.nio.file.StandardCopyOption;
 
 import com.cvmaker.JobDataFetcher.JobData;
 import com.cvmaker.configuration.ConfigManager;
+import com.cvmaker.service.ai.AiService;
+import com.cvmaker.service.ai.LLMModel;
 
 public class CVGenerator {
 
@@ -20,7 +22,7 @@ public class CVGenerator {
 
     public CVGenerator(TemplateLoader loader) {
         this.templateLoader = loader;
-        this.aiService = new AiService();
+        this.aiService = new AiService(LLMModel.GPT_4_1_MINI);
         this.jobDataFetcher = new JobDataFetcher();
         this.config = loadConfigSafely();
     }

@@ -2,43 +2,110 @@ import requests
 import getpass
 import os
 import base64
+import json
 from pathlib import Path
 import time
 import random
 import logging
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects, RequestException
+from datetime import datetime
+import openai 
+from collections import defaultdict, Counter
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("github_downloader.log"),
+        logging.FileHandler("github_skills_analyzer.log"),
         logging.StreamHandler()
     ]
 )
 
-# File extensions to include (only code files)
-CODE_EXTENSIONS = {
-    '.py', '.java', '.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.scss', '.sass',
-    '.less', '.php', '.rb', '.go', '.c', '.cpp', '.h', '.hpp', '.cs', '.swift',
-    '.kt', '.rs', '.sh', '.bash', '.sql', '.vue', '.jsx', '.tsx', '.xml', '.yaml',
-    '.yml', '.json', '.md', '.scala', '.pl', '.pm', '.asm', '.s', '.f', '.f90',
-    '.r', '.dart', '.lua', '.groovy', '.ps1', '.psm1', '.bat', '.cmd', '.hs', '.erl'
+# STRICT CODE FILE EXTENSIONS ONLY
+STRICT_CODE_EXTENSIONS = {
+    '.py', '.java', '.ts', '.tsx', '.cpp', '.c', '.h', '.hpp', '.cs', '.swift',
+    '.kt', '.rs', '.go', '.php', '.rb', '.scala', '.pl', '.asm', '.s', '.f', 
+    '.f90', '.r', '.dart', '.lua', '.groovy', '.hs', '.erl', '.clj', '.ml',
+    '.elm', '.jl', '.nim', '.cr', '.zig', '.v', '.d', '.pas', '.ada', '.adb',
+    '.ads', '.vhd', '.vhdl', '.vb', '.fs', '.fsx', '.m', '.mm', '.sol', '.move',
+    '.js', '.jsx', '.vue', '.svelte'  # Added common web dev extensions
 }
+
+# Files and directories to always skip
+SKIP_PATTERNS = {
+    'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'target', 'bin', 'obj',
+    '.gradle', '.idea', '.vscode', '__pycache__', '.pytest_cache', '.tox',
+    'vendor', 'packages', '.nuget', 'bower_components', 'jspm_packages',
+    '.DS_Store', 'Thumbs.db', '.env', '.env.local', '.env.production',
+    'coverage', '.nyc_output', 'logs', 'tmp', 'temp', '.tmp', '.temp'
+}
+
+# Configuration for content limits to control costs
+MAX_FILES_PER_REPO = 15  # Limit files analyzed per repo
+MAX_FILE_SIZE = 5000  # Max characters per file to analyze
+MAX_TOTAL_CONTENT = 8000  # Max total content sent to AI per repo
+
+def get_openai_api_key():
+    """Get OpenAI API key from environment variable"""
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        logging.error("OPENAI_API_KEY environment variable not found")
+        return None
+    openai.api_key = api_key
+    return api_key
+
+def make_request_with_retry(url, max_retries=3, base_delay=1, headers=None, params=None):
+    """Make a request with exponential backoff retry logic"""
+    retries = 0
+    while retries < max_retries:
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 403 and 'rate limit' in response.text.lower():
+                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+                current_time = int(time.time())
+                sleep_time = max(reset_time - current_time + 5, 60)
+                logging.warning(f"Rate limit hit. Waiting for {sleep_time} seconds...")
+                time.sleep(sleep_time)
+                continue
+                
+            if response.status_code == 200:
+                return response
+            else:
+                logging.warning(f"Request failed with status code {response.status_code}")
+                if response.status_code >= 500:
+                    retries += 1
+                    delay = base_delay * (2 ** retries) + random.uniform(0, 1)
+                    logging.info(f"Retrying in {delay:.2f} seconds...")
+                    time.sleep(delay)
+                else:
+                    return None
+                    
+        except (ConnectionError, Timeout, TooManyRedirects, RequestException) as e:
+            retries += 1
+            if retries >= max_retries:
+                logging.error(f"Max retries reached for {url}. Last error: {str(e)}")
+                return None
+                
+            delay = base_delay * (2 ** retries) + random.uniform(0, 1)
+            logging.info(f"Connection error. Retrying in {delay:.2f} seconds...")
+            time.sleep(delay)
+    
+    return None
 
 def get_github_repositories():
     """Authenticate with GitHub and list user repositories"""
-    # Get GitHub personal access token
-    token = getpass.getpass("Enter your GitHub personal access token: ")
+    token = os.getenv('GITHUB_KEY')
+    if not token:
+        logging.error("GITHUB_KEY environment variable not found")
+        return None, None, None
     
-    # Set up authentication headers
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json"
     }
     
-    # Get authenticated user info
     user_url = "https://api.github.com/user"
     try:
         user_response = make_request_with_retry(user_url, headers=headers)
@@ -51,13 +118,12 @@ def get_github_repositories():
     username = user_response.json()["login"]
     logging.info(f"Found GitHub username: {username}")
     
-    # Get repositories for the authenticated user
     repos_url = f"https://api.github.com/users/{username}/repos"
     all_repos = []
     page = 1
     
     while True:
-        params = {"page": page, "per_page": 100}
+        params = {"page": page, "per_page": 100, "sort": "updated", "direction": "desc"}
         try:
             repos_response = make_request_with_retry(repos_url, headers=headers, params=params)
             if not repos_response:
@@ -70,58 +136,11 @@ def get_github_repositories():
             all_repos.extend(repos)
             page += 1
         except Exception as e:
-            logging.error(f"Error fetching repositories page {page}: {str(e)}")
+            logging.error(f"Error fetching repositories: {str(e)}")
             break
     
-    # Print repository information
-    logging.info(f"Found {len(all_repos)} repositories for {username}:")
-    for i, repo in enumerate(all_repos, 1):
-        logging.info(f"{i}. {repo['name']}")
-        logging.info(f"   Description: {repo['description'] or 'No description'}")
-        logging.info(f"   Stars: {repo['stargazers_count']}")
-    
+    logging.info(f"Found {len(all_repos)} repositories")
     return username, all_repos, headers
-
-def make_request_with_retry(url, max_retries=5, base_delay=1, headers=None, params=None):
-    """Make a request with exponential backoff retry logic"""
-    retries = 0
-    while retries < max_retries:
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            
-            # Handle rate limiting
-            if response.status_code == 403 and 'rate limit' in response.text.lower():
-                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-                current_time = int(time.time())
-                sleep_time = max(reset_time - current_time + 5, 60)
-                logging.warning(f"Rate limit hit. Waiting for {sleep_time} seconds...")
-                time.sleep(sleep_time)
-                continue
-                
-            if response.status_code == 200:
-                return response
-            else:
-                logging.warning(f"Request failed with status code {response.status_code}: {response.text}")
-                if response.status_code >= 500:  # Server errors
-                    retries += 1
-                    delay = base_delay * (2 ** retries) + random.uniform(0, 1)
-                    logging.info(f"Retrying in {delay:.2f} seconds... (Attempt {retries}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    # Client errors except rate limiting are not retried
-                    return None
-                    
-        except (ConnectionError, Timeout, TooManyRedirects, RequestException) as e:
-            retries += 1
-            if retries >= max_retries:
-                logging.error(f"Max retries reached for {url}. Last error: {str(e)}")
-                return None
-                
-            delay = base_delay * (2 ** retries) + random.uniform(0, 1)
-            logging.info(f"Connection error: {str(e)}. Retrying in {delay:.2f} seconds... (Attempt {retries}/{max_retries})")
-            time.sleep(delay)
-    
-    return None
 
 def get_repository_contents(repo_name, username, headers, path=""):
     """Get contents of repository at the specified path"""
@@ -130,191 +149,359 @@ def get_repository_contents(repo_name, username, headers, path=""):
     try:
         response = make_request_with_retry(contents_url, headers=headers)
         if not response:
-            logging.error(f"Failed to fetch repository contents for {path}")
             return []
-        
         return response.json()
     except Exception as e:
         logging.error(f"Error getting contents for {path}: {str(e)}")
         return []
 
-def save_file_content(file_path, content, username_folder, repo_name, all_repos_file=None):
-    """Save file content to the appropriate text file and optionally to ALL_REPOS.txt"""
-    try:
-        # Create the output text file path
-        output_file = Path(username_folder) / f"{repo_name}.txt"
-        
-        # Append the file content to the repo text file
-        with open(output_file, "a", encoding="utf-8", errors="replace") as f:
-            f.write(f"===== {file_path} =======\n")
-            f.write(content)
-            f.write("\n\n")
-        
-        # If all_repos_file is provided, also append to it
-        if all_repos_file:
-            with open(all_repos_file, "a", encoding="utf-8", errors="replace") as f:
-                f.write(f"===== {repo_name}/{file_path} =======\n")
-                f.write(content)
-                f.write("\n\n")
-    except Exception as e:
-        logging.error(f"Error saving file content for {file_path}: {str(e)}")
+def should_skip_file(file_path):
+    """Check if a file should be skipped"""
+    file_name = Path(file_path).name.lower()
+    
+    # Skip test files, config files, etc.
+    skip_keywords = ['test', 'spec', 'config', 'setup', 'build', 'dist', 'min.js', 'bundle']
+    for keyword in skip_keywords:
+        if keyword in file_name:
+            return True
+    
+    return False
 
-def process_repository(repo, username, headers, all_repos_file):
-    """Process all code files from the repository and save to text file"""
-    repo_name = repo['name']
-    logging.info(f"Processing repository: {repo_name}")
-    
-    # Create username folder if it doesn't exist
-    username_folder = Path(username)
-    username_folder.mkdir(exist_ok=True)
-    
-    try:
-        # Create/clear the repository text file
-        repo_file = username_folder / f"{repo_name}.txt"
-        with open(repo_file, "w", encoding="utf-8") as f:
-            f.write(f"Repository: {repo_name}\n")
-            f.write(f"Owner: {username}\n")
-            f.write(f"URL: {repo['html_url']}\n")
-            f.write(f"Description: {repo['description'] or 'No description'}\n")
-            f.write("=" * 50 + "\n\n")
-        
-        # Add repository header to ALL_REPOS.txt
-        with open(all_repos_file, "a", encoding="utf-8") as f:
-            f.write(f"\n\n{'=' * 80}\n")
-            f.write(f"Repository: {repo_name}\n")
-            f.write(f"Owner: {username}\n")
-            f.write(f"URL: {repo['html_url']}\n")
-            f.write(f"Description: {repo['description'] or 'No description'}\n")
-            f.write("=" * 80 + "\n\n")
-        
-        # Process files recursively
-        process_path_contents(repo_name, username, headers, "", username_folder, all_repos_file)
-        
-        logging.info(f"Repository '{repo_name}' successfully saved to '{repo_file}'")
-        return True
-    except Exception as e:
-        logging.error(f"Error processing repository {repo_name}: {str(e)}")
-        return False
+def should_skip_directory(dir_path):
+    """Check if a directory should be skipped"""
+    dir_name = Path(dir_path).name.lower()
+    return dir_name in SKIP_PATTERNS
 
-def process_path_contents(repo_name, username, headers, path, username_folder, all_repos_file):
-    """Recursively process contents of a path in the repository"""
-    contents = get_repository_contents(repo_name, username, headers, path)
+def extract_code_samples(repo_name, username, headers, max_files=MAX_FILES_PER_REPO):
+    """Extract representative code samples from repository"""
+    code_samples = []
+    file_count = 0
     
-    for item in contents:
-        try:
-            if item['type'] == 'dir':
-                # Recursively process directory contents
-                process_path_contents(repo_name, username, headers, item['path'], username_folder, all_repos_file)
-            else:
-                # Process file if it's a code file
-                file_path = item['path']
-                file_ext = Path(file_path).suffix.lower()
+    def process_directory(path=""):
+        nonlocal file_count
+        if file_count >= max_files or should_skip_directory(path):
+            return
+        
+        contents = get_repository_contents(repo_name, username, headers, path)
+        
+        # Sort to prioritize main files
+        contents.sort(key=lambda x: (
+            x['type'] != 'file',  # Files first
+            'main' not in x['name'].lower(),  # Files with 'main' first
+            'index' not in x['name'].lower(),  # Then 'index' files
+            x['name'].lower()  # Then alphabetical
+        ))
+        
+        for item in contents:
+            if file_count >= max_files:
+                break
                 
-                if file_ext in CODE_EXTENSIONS:
-                    process_file(item, username_folder, headers, repo_name, all_repos_file)
-                else:
-                    logging.info(f"Skipping non-code file: {file_path}")
-        except Exception as e:
-            logging.error(f"Error processing path item {item.get('path', 'unknown')}: {str(e)}")
+            try:
+                if item['type'] == 'dir':
+                    process_directory(item['path'])
+                elif item['type'] == 'file':
+                    file_path = item['path']
+                    file_ext = Path(file_path).suffix.lower()
+                    
+                    if (file_ext in STRICT_CODE_EXTENSIONS and 
+                        not should_skip_file(file_path) and
+                        item.get('size', 0) < 50000):  # Skip very large files
+                        
+                        content = get_file_content(item, headers)
+                        if content:
+                            # Truncate content to limit size
+                            if len(content) > MAX_FILE_SIZE:
+                                content = content[:MAX_FILE_SIZE] + "\n... [truncated]"
+                            
+                            code_samples.append({
+                                'path': file_path,
+                                'extension': file_ext,
+                                'content': content,
+                                'size': len(content)
+                            })
+                            file_count += 1
+                            
+            except Exception as e:
+                logging.error(f"Error processing {item.get('path', 'unknown')}: {str(e)}")
+    
+    process_directory()
+    return code_samples
 
-def process_file(file_info, username_folder, headers, repo_name, all_repos_file):
-    """Process a single file from the repository"""
-    file_path = file_info['path']
-    
-    # Skip large files
-    if file_info.get('size', 0) > 1000000:  # Files larger than ~1MB
-        content = f"[Large file: {file_info.get('size', 'unknown')} bytes - content not included]"
-        save_file_content(file_path, content, username_folder, repo_name, all_repos_file)
-        logging.info(f"Skipped large file: {file_path}")
-        return
-    
-    # Get file content
+def get_file_content(file_info, headers):
+    """Get content of a single file"""
     try:
         if 'download_url' in file_info and file_info['download_url']:
             response = make_request_with_retry(file_info['download_url'], headers=headers)
             if response:
                 try:
-                    content = response.text
-                    save_file_content(file_path, content, username_folder, repo_name, all_repos_file)
-                    logging.info(f"Processed: {file_path}")
+                    return response.text
                 except UnicodeDecodeError:
-                    # For binary files, note that it's binary
-                    content = f"[Binary file: {file_info.get('size', 'unknown')} bytes - content not included]"
-                    save_file_content(file_path, content, username_folder, repo_name, all_repos_file)
-                    logging.info(f"Noted binary file: {file_path}")
-            else:
-                logging.warning(f"Failed to download {file_path}")
+                    return None
         else:
-            # For some files, we need to use the content from the API response
             response = make_request_with_retry(file_info['url'], headers=headers)
             if response:
                 content_data = response.json()
                 if 'content' in content_data and content_data.get('encoding') == 'base64':
                     try:
-                        decoded_content = base64.b64decode(content_data['content']).decode('utf-8')
-                        save_file_content(file_path, decoded_content, username_folder, repo_name, all_repos_file)
-                        logging.info(f"Processed: {file_path}")
+                        return base64.b64decode(content_data['content']).decode('utf-8')
                     except UnicodeDecodeError:
-                        # For binary files, note that it's binary
-                        content = f"[Binary file: {file_info.get('size', 'unknown')} bytes - content not included]"
-                        save_file_content(file_path, content, username_folder, repo_name, all_repos_file)
-                        logging.info(f"Noted binary file: {file_path}")
-                else:
-                    logging.warning(f"Unable to decode content for {file_path}")
-            else:
-                logging.warning(f"Failed to get content for {file_path}")
+                        return None
     except Exception as e:
-        logging.error(f"Error processing file {file_path}: {str(e)}")
+        logging.error(f"Error getting file content: {str(e)}")
+    return None
+
+def analyze_repository_with_ai(repo_info, code_samples):
+    """Use AI to analyze repository and extract skills/achievements"""
+    try:
+        # Prepare content for AI analysis
+        repo_summary = f"""
+Repository: {repo_info['name']}
+Description: {repo_info.get('description', 'No description')}
+Language: {repo_info.get('language', 'Multiple/Unknown')}
+Stars: {repo_info.get('stargazers_count', 0)}
+Forks: {repo_info.get('forks_count', 0)}
+"""
+        
+        # Combine code samples with size limit
+        code_content = ""
+        total_size = 0
+        
+        for sample in code_samples:
+            sample_text = f"\n--- {sample['path']} ---\n{sample['content']}\n"
+            if total_size + len(sample_text) > MAX_TOTAL_CONTENT:
+                break
+            code_content += sample_text
+            total_size += len(sample_text)
+        
+        if not code_content.strip():
+            return {
+                'skills': ['Repository analysis incomplete - no code samples available'],
+                'achievements': ['Repository exists but content could not be analyzed'],
+                'technologies': [],
+                'summary': 'Unable to analyze repository content'
+            }
+        
+        prompt = f"""
+Analyze this GitHub repository and provide a concise summary of the developer's skills and achievements demonstrated in the code.
+
+{repo_summary}
+
+Code samples:
+{code_content}
+
+Please provide a JSON response with:
+1. "technologies": List of technologies, frameworks, languages used
+2. "skills": List of programming skills and techniques demonstrated  
+3. "achievements": List of notable accomplishments or features implemented
+4. "summary": Brief 2-3 sentence overview of what this project demonstrates
+
+Focus on what the developer has accomplished and learned. Be specific about technical skills but keep it concise.
+"""
+
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # Using cheaper model to control costs
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,  # Limit response size
+            temperature=0.3
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        
+        # Try to parse JSON response
+        try:
+            return json.loads(result_text)
+        except json.JSONDecodeError:
+            # If JSON parsing fails, create structured response from text
+            return {
+                'skills': ['AI analysis completed but format irregular'],
+                'achievements': ['Repository analyzed with partial results'],
+                'technologies': [],
+                'summary': result_text[:200] + "..." if len(result_text) > 200 else result_text
+            }
+            
+    except Exception as e:
+        logging.error(f"Error in AI analysis: {str(e)}")
+        return {
+            'skills': ['Analysis failed - check API credentials and limits'],
+            'achievements': ['Repository exists but analysis encountered errors'],
+            'technologies': [],
+            'summary': f'Analysis error: {str(e)}'
+        }
 
 def main():
     try:
+        # Get API keys from environment variables
+        logging.info("Loading API keys from environment variables...")
+        openai_key = get_openai_api_key()
+        if not openai_key:
+            logging.error("OPENAI_API_KEY environment variable required")
+            return
+            
         username, all_repos, headers = get_github_repositories()
         if not all_repos:
             logging.error("No repositories found or authentication failed.")
             return
         
-        logging.info(f"Preparing to process all {len(all_repos)} repositories (code files only)...")
-        logging.info(f"Including files with extensions: {', '.join(sorted(CODE_EXTENSIONS))}")
+        logging.info(f"Found {len(all_repos)} repositories")
         
-        # Ask for confirmation before processing all repos
-        confirm = input(f"Process all {len(all_repos)} repositories? (y/n): ")
+        # Ask user how many repos to analyze
+        max_repos = input(f"How many repositories to analyze? (max {len(all_repos)}, enter for all): ")
+        if max_repos.strip():
+            try:
+                max_repos = min(int(max_repos), len(all_repos))
+                all_repos = all_repos[:max_repos]
+            except ValueError:
+                logging.info("Invalid number, analyzing all repositories")
+        
+        logging.info(f"Will analyze {len(all_repos)} repositories")
+        logging.info(f"Cost control: Max {MAX_FILES_PER_REPO} files per repo, {MAX_FILE_SIZE} chars per file")
+        
+        confirm = input("Proceed with AI analysis? This will use OpenAI API credits (y/n): ")
         if confirm.lower() != 'y':
             logging.info("Operation cancelled.")
             return
         
-        # Create username folder if it doesn't exist
-        username_folder = Path(username)
-        username_folder.mkdir(exist_ok=True)
+        # Create output directory
+        output_dir = Path(f"{username}_skills_analysis")
+        output_dir.mkdir(exist_ok=True)
         
-        # Create/clear the ALL_REPOS.txt file
-        all_repos_file = username_folder / "ALL_REPOS.txt"
-        with open(all_repos_file, "w", encoding="utf-8") as f:
-            f.write(f"ALL REPOSITORIES FOR {username}\n")
-            f.write(f"Created on: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total repositories: {len(all_repos)}\n")
-            f.write("=" * 50 + "\n\n")
+        # Initialize results
+        all_skills = Counter()
+        all_technologies = Counter()
+        repo_analyses = []
         
-        # Process all repositories
-        successful_repos = 0
         for i, repo in enumerate(all_repos, 1):
-            logging.info(f"[{i}/{len(all_repos)}] Processing repository: {repo['name']}")
-            success = process_repository(repo, username, headers, all_repos_file)
-            if success:
-                successful_repos += 1
+            logging.info(f"[{i}/{len(all_repos)}] Analyzing: {repo['name']}")
             
-            # Small delay between repositories to avoid rate limiting
-            if i < len(all_repos):
-                delay = random.uniform(2, 5)  # Random delay between 2-5 seconds
-                logging.info(f"Waiting {delay:.2f} seconds before next repository...")
-                time.sleep(delay)
+            try:
+                # Extract code samples
+                code_samples = extract_code_samples(repo['name'], username, headers)
+                
+                if not code_samples:
+                    logging.warning(f"No code samples found for {repo['name']}")
+                    continue
+                
+                logging.info(f"Found {len(code_samples)} code files to analyze")
+                
+                # Analyze with AI
+                analysis = analyze_repository_with_ai(repo, code_samples)
+                
+                # Store results
+                repo_analysis = {
+                    'name': repo['name'],
+                    'url': repo['html_url'],
+                    'description': repo.get('description', ''),
+                    'language': repo.get('language', ''),
+                    'stars': repo.get('stargazers_count', 0),
+                    'forks': repo.get('forks_count', 0),
+                    'analysis': analysis
+                }
+                
+                repo_analyses.append(repo_analysis)
+                
+                # Update counters
+                for skill in analysis.get('skills', []):
+                    all_skills[skill] += 1
+                for tech in analysis.get('technologies', []):
+                    all_technologies[tech] += 1
+                
+                # Save individual repo analysis
+                repo_file = output_dir / f"{repo['name']}_analysis.json"
+                with open(repo_file, 'w', encoding='utf-8') as f:
+                    json.dump(repo_analysis, f, indent=2, ensure_ascii=False)
+                
+                logging.info(f"Completed analysis of {repo['name']}")
+                
+                # Add delay to avoid rate limits
+                if i < len(all_repos):
+                    time.sleep(random.uniform(2, 4))
+                    
+            except Exception as e:
+                logging.error(f"Error analyzing {repo['name']}: {str(e)}")
+                continue
         
-        logging.info(f"\nProcessed {successful_repos} out of {len(all_repos)} repositories successfully!")
-        logging.info(f"Individual repository files are in the '{username}' folder")
-        logging.info(f"Combined repository data is in '{all_repos_file}'")
-        logging.info(f"Check 'github_downloader.log' for detailed information")
+        # Generate comprehensive summary
+        summary_report = {
+            'username': username,
+            'analysis_date': datetime.now().isoformat(),
+            'total_repositories': len(all_repos),
+            'analyzed_repositories': len(repo_analyses),
+            'top_skills': dict(all_skills.most_common(20)),
+            'top_technologies': dict(all_technologies.most_common(15)),
+            'repositories': repo_analyses
+        }
+        
+        # Save comprehensive summary
+        summary_file = output_dir / "SKILLS_SUMMARY.json"
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary_report, f, indent=2, ensure_ascii=False)
+        
+        # Create human-readable summary
+        readable_summary = generate_readable_summary(summary_report)
+        readable_file = output_dir / "SKILLS_SUMMARY.md"
+        with open(readable_file, 'w', encoding='utf-8') as f:
+            f.write(readable_summary)
+        
+        logging.info(f"\n{'='*50}")
+        logging.info(f"Analysis Complete!")
+        logging.info(f"Analyzed {len(repo_analyses)} repositories")
+        logging.info(f"Results saved in '{output_dir}' folder:")
+        logging.info(f"  - SKILLS_SUMMARY.json (detailed data)")
+        logging.info(f"  - SKILLS_SUMMARY.md (readable summary)")
+        logging.info(f"  - Individual repo analyses")
+        logging.info(f"{'='*50}")
         
     except Exception as e:
         logging.error(f"An unexpected error occurred: {str(e)}")
+
+def generate_readable_summary(summary_report):
+    """Generate human-readable summary report"""
+    md_content = f"""# GitHub Skills Analysis for {summary_report['username']}
+
+**Analysis Date:** {summary_report['analysis_date'][:10]}  
+**Repositories Analyzed:** {summary_report['analyzed_repositories']} of {summary_report['total_repositories']}
+
+## Top Skills Demonstrated
+"""
+    
+    for skill, count in summary_report['top_skills'].items():
+        md_content += f"- **{skill}** (appeared in {count} repositories)\n"
+    
+    md_content += "\n## Top Technologies Used\n"
+    
+    for tech, count in summary_report['top_technologies'].items():
+        md_content += f"- **{tech}** (used in {count} repositories)\n"
+    
+    md_content += "\n## Repository Analysis\n\n"
+    
+    for repo in summary_report['repositories']:
+        md_content += f"### [{repo['name']}]({repo['url']})\n"
+        if repo['description']:
+            md_content += f"*{repo['description']}*\n\n"
+        
+        analysis = repo['analysis']
+        
+        if analysis.get('summary'):
+            md_content += f"**Summary:** {analysis['summary']}\n\n"
+        
+        if analysis.get('technologies'):
+            md_content += "**Technologies:** " + ", ".join(analysis['technologies']) + "\n\n"
+        
+        if analysis.get('skills'):
+            md_content += "**Skills Demonstrated:**\n"
+            for skill in analysis['skills']:
+                md_content += f"- {skill}\n"
+            md_content += "\n"
+        
+        if analysis.get('achievements'):
+            md_content += "**Key Achievements:**\n"
+            for achievement in analysis['achievements']:
+                md_content += f"- {achievement}\n"
+            md_content += "\n"
+        
+        md_content += "---\n\n"
+    
+    return md_content
 
 if __name__ == "__main__":
     main()

@@ -3,6 +3,8 @@ package com.cvmaker;
 import java.nio.file.Paths;
 
 import com.cvmaker.configuration.ConfigManager;
+import com.cvmaker.service.ai.AiService;
+import com.cvmaker.service.ai.LLMModel;
 
 public class App {
 
@@ -14,7 +16,7 @@ public class App {
                 String userDataFile = args.length > 1 ? args[1] : "userdata.txt";
                 String cvPromptFile = args.length > 2 ? args[2] : "cv_prompt.txt";
                 String coverLetterPromptFile = args.length > 3 ? args[3] : "cover_letter_prompt.txt";
-                
+
                 generateFromJobUrl(jobUrl, userDataFile, cvPromptFile, coverLetterPromptFile);
             } else {
                 // Traditional config file mode
@@ -38,7 +40,7 @@ public class App {
         // Initialize components
         System.out.println("Initializing AI and template systems...");
         TemplateLoader loader = new TemplateLoader(Paths.get("templates"));
-        AiService aiService = new AiService();
+        AiService aiService = new AiService(LLMModel.GPT_4_1_MINI);
         CVGenerator generator = new CVGenerator(loader, aiService);
 
         // Generate from job URL
@@ -49,13 +51,13 @@ public class App {
         System.out.println();
         System.out.println("=== Generation Complete ===");
         System.out.println("Total time: " + formatDuration(endTime - startTime));
-        
+
         aiService.shutdown();
     }
 
     private static void generateFromConfig() throws Exception {
         System.out.println("=== CV Generator - Config File Mode ===");
-        
+
         // Load configuration
         System.out.println("Loading configuration...");
         ConfigManager config = new ConfigManager();
@@ -63,13 +65,13 @@ public class App {
         // Initialize components
         System.out.println("Initializing AI and template systems...");
         TemplateLoader loader = new TemplateLoader(Paths.get(config.getTemplateDirectory()));
-        AiService aiService = new AiService(config.getAiModel(), config.getAiTemperature());
+        AiService aiService = new AiService(LLMModel.GPT_4_1_MINI);
         CVGenerator generator = new CVGenerator(loader, aiService, config);
 
         // Check if job URL is provided in config
         if (config.hasJobUrl()) {
             System.out.println("Job URL found in configuration, switching to URL mode...");
-            generator.generateFromJobUrl(config.getJobUrl(), config.getUserDataFile(), 
+            generator.generateFromJobUrl(config.getJobUrl(), config.getUserDataFile(),
                     config.getCvPromptFile(), config.getCoverLetterPromptFile());
         } else {
             // Generate CV and cover letter using traditional method
@@ -90,7 +92,7 @@ public class App {
                 config.getOutputDirectory(),
                 config.getOutputPdfName()
         );
-        
+
         // Generate cover letter if enabled
         if (config.isGenerateCoverLetter()) {
             System.out.println("Generating cover letter...");
