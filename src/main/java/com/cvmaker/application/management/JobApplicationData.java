@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 public class JobApplicationData {
+
     private String emailId;
     private String subject;
     private String fromEmail;
@@ -18,9 +19,25 @@ public class JobApplicationData {
     private double confidenceScore;
     private boolean isJobRelated;
     private String processedTimestamp;
+    private String applicationUrl;
+    
+    // New fields for enhanced information
+    private String emailLink;
+    private String provider; // LinkedIn, Indeed, company website, etc.
+    private String salaryRange;
+    private String workLocation; // Remote, Hybrid, On-site
+    private String workType; // Full-time, Part-time, Contract
+    private String contactPerson; // Recruiter or HR contact name
+    private String contactEmail;
+    private String nextSteps;
+    private String applicationDeadline;
+    private String requiredSkills;
+    private String rejectionReason;
+    private String offerDetails;
 
     // Constructors
-    public JobApplicationData() {}
+    public JobApplicationData() {
+    }
 
     public JobApplicationData(String emailId, String subject, String fromEmail, String date) {
         this.emailId = emailId;
@@ -28,11 +45,22 @@ public class JobApplicationData {
         this.fromEmail = fromEmail;
         this.date = date;
         this.processedTimestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        this.emailLink = generateGmailLink(emailId);
     }
 
-    // Getters and setters
+    private String generateGmailLink(String emailId) {
+        if (emailId != null && !emailId.isEmpty()) {
+            return "https://mail.google.com/mail/u/0/#inbox/" + emailId;
+        }
+        return "";
+    }
+
+    // Existing getters and setters...
     public String getEmailId() { return emailId; }
-    public void setEmailId(String emailId) { this.emailId = emailId; }
+    public void setEmailId(String emailId) { 
+        this.emailId = emailId; 
+        this.emailLink = generateGmailLink(emailId);
+    }
 
     public String getSubject() { return subject; }
     public void setSubject(String subject) { this.subject = subject; }
@@ -73,7 +101,46 @@ public class JobApplicationData {
     public String getProcessedTimestamp() { return processedTimestamp; }
     public void setProcessedTimestamp(String processedTimestamp) { this.processedTimestamp = processedTimestamp; }
 
-    // Serialization methods
+    public String getApplicationUrl() { return applicationUrl; }
+    public void setApplicationUrl(String applicationUrl) { this.applicationUrl = applicationUrl; }
+
+    // New getters and setters
+    public String getEmailLink() { return emailLink; }
+    public void setEmailLink(String emailLink) { this.emailLink = emailLink; }
+
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
+
+    public String getSalaryRange() { return salaryRange; }
+    public void setSalaryRange(String salaryRange) { this.salaryRange = salaryRange; }
+
+    public String getWorkLocation() { return workLocation; }
+    public void setWorkLocation(String workLocation) { this.workLocation = workLocation; }
+
+    public String getWorkType() { return workType; }
+    public void setWorkType(String workType) { this.workType = workType; }
+
+    public String getContactPerson() { return contactPerson; }
+    public void setContactPerson(String contactPerson) { this.contactPerson = contactPerson; }
+
+    public String getContactEmail() { return contactEmail; }
+    public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
+
+    public String getNextSteps() { return nextSteps; }
+    public void setNextSteps(String nextSteps) { this.nextSteps = nextSteps; }
+
+    public String getApplicationDeadline() { return applicationDeadline; }
+    public void setApplicationDeadline(String applicationDeadline) { this.applicationDeadline = applicationDeadline; }
+
+    public String getRequiredSkills() { return requiredSkills; }
+    public void setRequiredSkills(String requiredSkills) { this.requiredSkills = requiredSkills; }
+
+    public String getRejectionReason() { return rejectionReason; }
+    public void setRejectionReason(String rejectionReason) { this.rejectionReason = rejectionReason; }
+
+    public String getOfferDetails() { return offerDetails; }
+    public void setOfferDetails(String offerDetails) { this.offerDetails = offerDetails; }
+
     public String serialize() {
         return String.join("||",
                 emailId != null ? emailId : "",
@@ -89,7 +156,20 @@ public class JobApplicationData {
                 applicationStatus != null ? applicationStatus : "",
                 String.valueOf(confidenceScore),
                 String.valueOf(isJobRelated),
-                processedTimestamp != null ? processedTimestamp : ""
+                processedTimestamp != null ? processedTimestamp : "",
+                applicationUrl != null ? applicationUrl : "",
+                emailLink != null ? emailLink : "",
+                provider != null ? provider : "",
+                salaryRange != null ? salaryRange : "",
+                workLocation != null ? workLocation : "",
+                workType != null ? workType : "",
+                contactPerson != null ? contactPerson : "",
+                contactEmail != null ? contactEmail : "",
+                nextSteps != null ? nextSteps : "",
+                applicationDeadline != null ? applicationDeadline : "",
+                requiredSkills != null ? requiredSkills : "",
+                rejectionReason != null ? rejectionReason : "",
+                offerDetails != null ? offerDetails : ""
         );
     }
 
@@ -129,14 +209,29 @@ public class JobApplicationData {
         data.setJobRelated(Boolean.parseBoolean(parts[12]));
         data.setProcessedTimestamp(parts[13].isEmpty() ? null : parts[13]);
 
+        // Handle new fields with backward compatibility
+        if (parts.length > 14) data.setApplicationUrl(parts[14].isEmpty() ? null : parts[14]);
+        if (parts.length > 15) data.setEmailLink(parts[15].isEmpty() ? null : parts[15]);
+        if (parts.length > 16) data.setProvider(parts[16].isEmpty() ? null : parts[16]);
+        if (parts.length > 17) data.setSalaryRange(parts[17].isEmpty() ? null : parts[17]);
+        if (parts.length > 18) data.setWorkLocation(parts[18].isEmpty() ? null : parts[18]);
+        if (parts.length > 19) data.setWorkType(parts[19].isEmpty() ? null : parts[19]);
+        if (parts.length > 20) data.setContactPerson(parts[20].isEmpty() ? null : parts[20]);
+        if (parts.length > 21) data.setContactEmail(parts[21].isEmpty() ? null : parts[21]);
+        if (parts.length > 22) data.setNextSteps(parts[22].isEmpty() ? null : parts[22]);
+        if (parts.length > 23) data.setApplicationDeadline(parts[23].isEmpty() ? null : parts[23]);
+        if (parts.length > 24) data.setRequiredSkills(parts[24].isEmpty() ? null : parts[24]);
+        if (parts.length > 25) data.setRejectionReason(parts[25].isEmpty() ? null : parts[25]);
+        if (parts.length > 26) data.setOfferDetails(parts[26].isEmpty() ? null : parts[26]);
+
         return data;
     }
 
     @Override
     public String toString() {
         return String.format(
-                "JobApplicationData{emailId='%s', subject='%s', company='%s', position='%s', category=%s, status='%s', confidence=%.2f, jobRelated=%s, processed='%s'}",
-                emailId, subject, companyName, positionTitle, category, applicationStatus, confidenceScore, isJobRelated, processedTimestamp
+                "JobApplicationData{emailId='%s', subject='%s', company='%s', position='%s', category=%s, status='%s', provider='%s', workLocation='%s', confidence=%.2f, jobRelated=%s, processed='%s'}",
+                emailId, subject, companyName, positionTitle, category, applicationStatus, provider, workLocation, confidenceScore, isJobRelated, processedTimestamp
         );
     }
 }

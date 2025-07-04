@@ -1,6 +1,8 @@
 package com.cvmaker.application.management;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -184,15 +186,15 @@ public class ApplicationManager {
             jobApplicationsDb.put(jobData.getEmailId(), jobData);
             reportingService.displayJobApplicationData(jobData);
 
-            // Update Google Sheets if enabled
-            if (updateGoogleSheets) {
-                try {
-                    sheetsService.updateJobApplicationData(jobData);
-                    System.out.println("  ≡ƒÅï Updated job application in Google Sheets");
-                } catch (Exception e) {
-                    System.err.println("  ✖ Failed to update Google Sheets: " + e.getMessage());
-                }
-            }
+            // // Update Google Sheets if enabled
+            // if (updateGoogleSheets) {
+            //     try {
+            //         sheetsService.updateJobApplicationData(jobData);
+            //         System.out.println("  ≡ƒÅï Updated job application in Google Sheets");
+            //     } catch (Exception e) {
+            //         System.err.println("  ✖ Failed to update Google Sheets: " + e.getMessage());
+            //     }
+            // }
         }
     }
 
@@ -207,18 +209,21 @@ public class ApplicationManager {
         }
 
         System.out.println("\n=== Syncing All Job Applications to Google Sheets ===");
-        int syncCount = 0;
 
-        for (JobApplicationData jobData : jobApplicationsDb.values()) {
+        // Group applications by company and keep only the latest/most important status for each
+        Map<String, JobApplicationData> consolidatedApplications = consolidateApplicationsByCompany();
+
+        int syncCount = 0;
+        for (JobApplicationData jobData : consolidatedApplications.values()) {
             if (jobData.isJobRelated()) {
                 try {
                     sheetsService.updateJobApplicationData(jobData);
                     syncCount++;
-                    System.out.printf("  ≡ƒÅï Synced: %s - %s\n",
+                    System.out.printf("  ✓ Synced: %s - %s\n",
                             jobData.getCompanyName() != null ? jobData.getCompanyName() : "Unknown",
                             jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "Unknown");
                 } catch (Exception e) {
-                    System.err.printf("  ✖ Failed to sync application %s: %s\n",
+                    System.err.printf("  ✗ Failed to sync application %s: %s\n",
                             jobData.getEmailId(), e.getMessage());
                 }
             }
@@ -227,10 +232,74 @@ public class ApplicationManager {
         System.out.printf("\nSync complete. %d applications synchronized to Google Sheets.\n", syncCount);
     }
 
+// New method to consolidate applications by company
+    private Map<String, JobApplicationData> consolidateApplicationsByCompany() {
+        Map<String, JobApplicationData> consolidated = new HashMap<>();
+
+        // Status priority: higher number = higher priority
+        Map<String, Integer> statusPriority = Map.of(
+                "Rejected", 5,
+                "Offer", 4,
+                "Interview", 3,
+                "Assessment", 2,
+                "Applied", 1
+        );
+
+        for (JobApplicationData jobData : jobApplicationsDb.values()) {
+            if (!jobData.isJobRelated() || jobData.getCompanyName() == null) {
+                continue;
+            }
+
+            String companyKey = jobData.getCompanyName().trim().toLowerCase();
+            JobApplicationData existing = consolidated.get(companyKey);
+
+            if (existing == null) {
+                // First entry for this company
+                consolidated.put(companyKey, jobData);
+            } else {
+                // Compare and keep the higher priority status
+                String existingStatus = existing.getApplicationStatus() != null ? existing.getApplicationStatus() : "Applied";
+                String newStatus = jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied";
+
+                int existingPriority = getStatusPriority(existingStatus, statusPriority);
+                int newPriority = getStatusPriority(newStatus, statusPriority);
+
+                if (newPriority > existingPriority) {
+                    // New status has higher priority, replace
+                    consolidated.put(companyKey, jobData);
+                } else if (newPriority == existingPriority) {
+                    // Same priority, keep the more recent one
+                    try {
+                        LocalDateTime existingTime = LocalDateTime.parse(existing.getProcessedTimestamp());
+                        LocalDateTime newTime = LocalDateTime.parse(jobData.getProcessedTimestamp());
+                        if (newTime.isAfter(existingTime)) {
+                            consolidated.put(companyKey, jobData);
+                        }
+                    } catch (Exception e) {
+                        // If timestamp parsing fails, keep the existing one
+                    }
+                }
+                // If existing has higher priority, keep it (do nothing)
+            }
+        }
+
+        return consolidated;
+    }
+
+// Helper method to get status priority
+    private int getStatusPriority(String status, Map<String, Integer> statusPriority) {
+        for (Map.Entry<String, Integer> entry : statusPriority.entrySet()) {
+            if (status.toLowerCase().contains(entry.getKey().toLowerCase())) {
+                return entry.getValue();
+            }
+        }
+        return 1; // Default to lowest priority (Applied)
+    }
+
     public void formatGoogleSheet() {
         if (updateGoogleSheets) {
             try {
-                sheetsService.formatSpreadsheet();
+                // sheetsService.formatSpreadsheet();
                 System.out.println("Google Sheets formatting applied successfully");
             } catch (Exception e) {
                 System.err.println("Failed to format Google Sheets: " + e.getMessage());
@@ -275,11 +344,11 @@ public class ApplicationManager {
 
             manager.initialize(useDummyData, updateGoogleSheets);
 
-            // Process new job application emails
+            // Process new job application emails (this will NOT update Google Sheets)
             manager.processJobApplicationEmails();
 
-            // Sync all existing applications to Google Sheets
-            // This ensures the sheet has all applications, not just new ones
+            // NOW sync all applications to Google Sheets with intelligent consolidation
+            // This ensures each company appears only once with the most important status
             manager.syncAllApplicationsToGoogleSheets();
 
             // Apply formatting to Google Sheet

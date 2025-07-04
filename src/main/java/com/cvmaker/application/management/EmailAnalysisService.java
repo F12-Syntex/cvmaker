@@ -18,13 +18,13 @@ public class EmailAnalysisService {
         String cleanBody = extractTextFromHtml(body);
         String cleanSubject = extractTextFromHtml(subject);
 
-        System.out.printf("  📝 Extracted text length: %d characters\n", cleanBody.length());
+        System.out.printf("  🔍 Extracted text length: %d characters\n", cleanBody.length());
 
-        String prompt = buildCategorizationPrompt(cleanSubject, from, cleanBody);
+        String prompt = buildEnhancedCategorizationPrompt(cleanSubject, from, cleanBody);
 
         try {
             String aiResponse = aiService.query(prompt);
-            return parseAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
+            return parseEnhancedAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
         } catch (Exception e) {
             System.err.println("Error in AI categorization: " + e.getMessage());
             return createFallbackData(emailId, cleanSubject, from, date, cleanBody);
@@ -49,67 +49,82 @@ public class EmailAnalysisService {
                 .replaceAll("\\s+", " ")
                 .trim();
 
-        if (text.length() > 1000) {
-            text = text.substring(0, 1000) + "...";
+        if (text.length() > 2000) {
+            text = text.substring(0, 2000) + "...";
         }
 
         return text;
     }
 
-    private String buildCategorizationPrompt(String subject, String from, String body) {
+    private String buildEnhancedCategorizationPrompt(String subject, String from, String body) {
         return String.format("""
-    Analyze this email and determine if it's STRICTLY related to the user's PERSONAL job application process. 
-    
-    ONLY CONSIDER AN EMAIL JOB-RELATED IF IT MEETS ONE OF THESE SPECIFIC CRITERIA:
-    1. Direct response to a job application the user has submitted (confirmation, status update, rejection, offer)
-    2. Interview scheduling/confirmation for a position the user has applied to
-    3. Direct recruiter outreach specifically about a job opportunity for the user (not general newsletters)
-    4. Follow-up communications about the user's specific application or interview
-    
-    EXPLICITLY IGNORE ALL OF THESE (even if they contain job-related keywords):
-    - General career advice or tips
-    - Job boards or career sites sending general updates or listings
-    - Newsletters about career opportunities or industry insights
-    - "Career opportunities" emails that aren't about a specific application
-    - LinkedIn or other platform notifications about jobs
-    - Networking event invitations
-    - Industry webinars or educational content
-    - ANY mass email or newsletter that's not about the user's specific application
-    
-    IF IN DOUBT, CLASSIFY AS NOT JOB-RELATED. Be extremely strict and conservative.
-    
-    Return a JSON response with these fields:
-    
-    Required fields:
-    - isJobRelated: true/false (must be false unless it's DEFINITELY about the user's specific job application)
-    - confidenceScore: Your confidence in this determination (0.0-1.0)
-    
-    If isJobRelated is true, also include:
-    - category: One of [%s]
-    - companyName: Company name (extract from email or content)
-    - positionTitle: Job position/title mentioned
-    - applicationStatus: Current status (e.g., Applied, Interview Scheduled, Rejected, Offered, etc.)
-    
-    Optional fields (if mentioned):
-    - interviewDate: Any interview date mentioned
-    - interviewLocation: Interview location (virtual / physical)
-    - extractedInfo: Key information summary
-    
-    If isJobRelated is false, simply return {"isJobRelated": false, "confidenceScore": 0.9} and ignore other fields.
-    
-    Email Details:
-    Subject: %s
-    From: %s
-    Body (plain text): %s
-    
-    Return only valid JSON without any additional text or explanations.
-    """,
+        Analyze this email and determine if it's STRICTLY related to the user's PERSONAL job application process. 
+            
+        ONLY CONSIDER AN EMAIL JOB-RELATED IF IT MEETS ONE OF THESE SPECIFIC CRITERIA:
+        1. Direct response to a job application the user has submitted (confirmation, status update, rejection, offer)
+        2. Interview scheduling/confirmation for a position the user has applied to
+        3. Direct recruiter outreach specifically about a job opportunity for the user (not general newsletters)
+        4. Follow-up communications about the user's specific application or interview
+            
+        EXPLICITLY IGNORE ALL OF THESE (even if they contain job-related keywords):
+        - General career advice or tips
+        - Job boards or career sites sending general updates or listings
+        - Newsletters about career opportunities or industry insights
+        - "Career opportunities" emails that aren't about a specific application
+        - LinkedIn or other platform notifications about jobs
+        - Networking event invitations
+        - Industry webinars or educational content
+        - ANY mass email or newsletter that's not about the user's specific application
+            
+        IF IN DOUBT, CLASSIFY AS NOT JOB-RELATED. Be extremely strict and conservative.
+            
+        Return a JSON response with these fields:
+            
+        Required fields:
+        - isJobRelated: true/false (must be false unless it's DEFINITELY about the user's specific job application)
+        - confidenceScore: Your confidence in this determination (0.0-1.0)
+            
+        If isJobRelated is true, also include:
+        - category: One of [%s]
+        - companyName: Company name (extract from email or content)
+        - positionTitle: Job position/title mentioned
+        - applicationStatus: Current status (e.g., Applied, Interview Scheduled, Rejected, Offered, etc.)
+        - provider: Platform/source (LinkedIn, Indeed, AngelList, Company Website, Direct Email, etc.)
+        - workLocation: Remote/Hybrid/On-site/City name (if mentioned)
+        - workType: Full-time/Part-time/Contract/Internship (if mentioned)
+        - salaryRange: Any salary information mentioned (e.g., "$80k-100k", "Competitive")
+        - contactPerson: Name of recruiter or HR contact (if mentioned)
+        - contactEmail: Contact email for follow-up (if different from sender)
+        - nextSteps: What the candidate should do next (if mentioned)
+        - applicationDeadline: Any deadline mentioned
+        - requiredSkills: Key skills or requirements mentioned
+        - rejectionReason: Specific reason for rejection (if it's a rejection email)
+        - offerDetails: Salary, benefits, start date (if it's an offer email)
+            
+        Optional fields (if mentioned):
+        - interviewDate: Any interview date mentioned
+        - interviewLocation: Interview location (virtual / physical address)
+        - extractedInfo: Brief summary of key information (max 100 words)
+        - applicationUrl: Extract any URL related to the job application (application portal, job description page, etc.)
+            
+        If isJobRelated is false, simply return {"isJobRelated": false, "confidenceScore": 0.9} and ignore other fields.
+            
+        IMPORTANT: Only extract information that is explicitly mentioned or strongly implied in the email content. 
+        Do not make assumptions or add generic information. If something is not mentioned, leave it empty.
+            
+        Email Details:
+        Subject: %s
+        From: %s
+        Body (plain text): %s
+            
+        Return only valid JSON without any additional text or explanations.
+        """,
                 EmailCategory.getAllCategories(),
                 subject, from, body
         );
     }
 
-    private JobApplicationData parseAIResponse(String emailId, String subject, String from, String date, String body, String aiResponse) {
+    private JobApplicationData parseEnhancedAIResponse(String emailId, String subject, String from, String date, String body, String aiResponse) {
         JobApplicationData data = new JobApplicationData(emailId, subject, from, date);
 
         try {
@@ -140,6 +155,7 @@ public class EmailAnalysisService {
                 return data;
             }
 
+            // Basic fields
             String category = extractJsonValue(cleanResponse, "category");
             try {
                 data.setCategory(EmailCategory.valueOf(category));
@@ -153,6 +169,20 @@ public class EmailAnalysisService {
             data.setInterviewDate(extractJsonValue(cleanResponse, "interviewDate"));
             data.setInterviewLocation(extractJsonValue(cleanResponse, "interviewLocation"));
             data.setExtractedInfo(extractJsonValue(cleanResponse, "extractedInfo"));
+            data.setApplicationUrl(extractJsonValue(cleanResponse, "applicationUrl"));
+
+            // Enhanced fields
+            data.setProvider(determineProvider(from, body, extractJsonValue(cleanResponse, "provider")));
+            data.setWorkLocation(extractJsonValue(cleanResponse, "workLocation"));
+            data.setWorkType(extractJsonValue(cleanResponse, "workType"));
+            data.setSalaryRange(extractJsonValue(cleanResponse, "salaryRange"));
+            data.setContactPerson(extractJsonValue(cleanResponse, "contactPerson"));
+            data.setContactEmail(extractJsonValue(cleanResponse, "contactEmail"));
+            data.setNextSteps(extractJsonValue(cleanResponse, "nextSteps"));
+            data.setApplicationDeadline(extractJsonValue(cleanResponse, "applicationDeadline"));
+            data.setRequiredSkills(extractJsonValue(cleanResponse, "requiredSkills"));
+            data.setRejectionReason(extractJsonValue(cleanResponse, "rejectionReason"));
+            data.setOfferDetails(extractJsonValue(cleanResponse, "offerDetails"));
 
         } catch (Exception e) {
             System.err.println("Error parsing AI response: " + e.getMessage());
@@ -160,6 +190,34 @@ public class EmailAnalysisService {
         }
 
         return data;
+    }
+
+    private String determineProvider(String from, String body, String aiProvider) {
+        if (aiProvider != null && !aiProvider.trim().isEmpty()) {
+            return aiProvider;
+        }
+
+        String combinedText = (from + " " + body).toLowerCase();
+        
+        if (combinedText.contains("linkedin") || from.toLowerCase().contains("linkedin")) {
+            return "LinkedIn";
+        } else if (combinedText.contains("indeed") || from.toLowerCase().contains("indeed")) {
+            return "Indeed";
+        } else if (combinedText.contains("glassdoor") || from.toLowerCase().contains("glassdoor")) {
+            return "Glassdoor";
+        } else if (combinedText.contains("angellist") || from.toLowerCase().contains("angellist")) {
+            return "AngelList";
+        } else if (combinedText.contains("ziprecruiter") || from.toLowerCase().contains("ziprecruiter")) {
+            return "ZipRecruiter";
+        } else if (combinedText.contains("monster") || from.toLowerCase().contains("monster")) {
+            return "Monster";
+        } else if (combinedText.contains("dice") || from.toLowerCase().contains("dice")) {
+            return "Dice";
+        } else if (from.toLowerCase().contains("noreply") || from.toLowerCase().contains("no-reply")) {
+            return "Company Website";
+        } else {
+            return "Direct Email";
+        }
     }
 
     private String extractJsonValue(String json, String key) {
@@ -181,6 +239,7 @@ public class EmailAnalysisService {
         if (isJobRelated) {
             fallbackData.setCategory(categorizeEmailRuleBased(subject, body));
             fallbackData.setConfidenceScore(0.5);
+            fallbackData.setProvider(determineProvider(from, body, null));
         }
 
         return fallbackData;
@@ -225,7 +284,6 @@ public class EmailAnalysisService {
             return true;
         }
 
-        // Default to false for anything not clearly related to the user's specific applications
         return false;
     }
 
