@@ -17,7 +17,7 @@ public class AiService {
         this.executorService = Executors.newSingleThreadExecutor();
 
         this.model = model;
-        this.llmClient = LLMClientFactory.createClient(LLMProvider.LOCAL, this.model);
+        this.llmClient = LLMClientFactory.createClient(this.model);
 
         System.out.println("Using default model: " + model.getModelName());
         System.out.println("url: " + Endpoint.OLLAMA_API.getUrl());
@@ -31,7 +31,7 @@ public class AiService {
 
     public AiService(LLMProvider provider) {
         this.model = LLMModel.GPT_4_1_MINI;
-        this.llmClient = LLMClientFactory.createClient(provider, this.model);
+        this.llmClient = LLMClientFactory.createClient(this.model);
         this.temperature = 0.3;
         this.executorService = Executors.newSingleThreadExecutor();
     }

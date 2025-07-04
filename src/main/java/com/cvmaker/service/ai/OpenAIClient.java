@@ -9,6 +9,7 @@ public class OpenAIClient implements LLMClient {
     private final com.openai.client.OpenAIClient client;
 
     public OpenAIClient() {
+        //TODO: grab from .env file instead
         this.client = OpenAIOkHttpClient.fromEnv();
     }
 

@@ -1,299 +1,295 @@
 package com.cvmaker.application.management;
 
-import java.io.File;
-import java.io.IOException;
-import java.security.GeneralSecurityException;
-import java.util.Base64;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import com.google.api.client.auth.oauth2.Credential;
-import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
-import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
-import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
-import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
-import com.google.api.client.http.javanet.NetHttpTransport;
-import com.google.api.client.json.JsonFactory;
-import com.google.api.client.json.gson.GsonFactory;
-import com.google.api.client.util.store.FileDataStoreFactory;
-import com.google.api.services.gmail.Gmail;
-import com.google.api.services.gmail.GmailScopes;
-import com.google.api.services.gmail.model.ListMessagesResponse;
-import com.google.api.services.gmail.model.Message;
-import com.google.api.services.gmail.model.MessagePart;
-import com.google.api.services.gmail.model.MessagePartHeader;
-
-import io.github.cdimascio.dotenv.Dotenv;
+import com.cvmaker.service.ai.AiService;
+import com.cvmaker.service.ai.LLMModel;
 
 public class ApplicationManager {
 
-    private static final String APPLICATION_NAME = "Job Application Manager";
-    private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
-    private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
-    private static final String TOKENS_DIRECTORY_PATH = "tokens";
+    private final DataStorage dataStorage;
+    private final EmailAnalysisService emailAnalysisService;
+    private final ReportingService reportingService;
+    private final DummyEmailService dummyEmailService;
+    private GmailService gmailService;
+    private GoogleSheetsService sheetsService; // Added Google Sheets service
 
-    private static Credential getCredentials() throws IOException, GeneralSecurityException {
-        final NetHttpTransport HTTP_TRANSPORT = GoogleNetHttpTransport.newTrustedTransport();
-        Dotenv dotenv = Dotenv.load();
+    private Set<String> processedEmailIds;
+    private Map<String, JobApplicationData> jobApplicationsDb;
+    private boolean useDummyData;
+    private boolean isFirstRun;
+    private boolean updateGoogleSheets; // Flag for Google Sheets updates
 
-        String clientId = dotenv.get("GOOGLE_CLIENT_ID");
-        String clientSecret = dotenv.get("GOOGLE_CLIENT_SECRET");
+    private final LLMModel model = LLMModel.GPT_4_1_MINI;
 
-        // Create GoogleClientSecrets object
-        GoogleClientSecrets.Details details = new GoogleClientSecrets.Details()
-                .setClientId(clientId)
-                .setClientSecret(clientSecret);
-        GoogleClientSecrets clientSecrets = new GoogleClientSecrets().setInstalled(details);
+    public ApplicationManager() {
+        this.dataStorage = new DataStorage();
+        this.reportingService = new ReportingService();
+        this.dummyEmailService = new DummyEmailService();
+        this.sheetsService = new GoogleSheetsService(); // Initialize sheets service
 
-        // Build flow and trigger user authorization request.
-        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                HTTP_TRANSPORT, JSON_FACTORY, clientSecrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new File(TOKENS_DIRECTORY_PATH)))
-                .setAccessType("offline")
-                .build();
-
-        LocalServerReceiver receiver = new LocalServerReceiver.Builder()
-                .setPort(8888)
-                .build();
-
-        return new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
+        // Initialize AI service
+        AiService aiService = new AiService(model);
+        this.emailAnalysisService = new EmailAnalysisService(aiService);
     }
 
-    /**
-     * Build Gmail service
-     */
-    private static Gmail buildGmailService() throws GeneralSecurityException, IOException {
-        final NetHttpTransport HTTP_TRANSPORT = GoogleNetHttpTransport.newTrustedTransport();
-        return new Gmail.Builder(HTTP_TRANSPORT, JSON_FACTORY, getCredentials())
-                .setApplicationName(APPLICATION_NAME)
-                .build();
+    public void initialize(boolean useDummyEmails, boolean updateGoogleSheets) {
+        this.useDummyData = useDummyEmails;
+        this.updateGoogleSheets = updateGoogleSheets;
+
+        if (!useDummyData) {
+            try {
+                this.gmailService = new GmailService();
+                this.gmailService.initialize();
+            } catch (Exception e) {
+                System.err.println("Failed to initialize Gmail service: " + e.getMessage());
+                throw new RuntimeException(e);
+            }
+        }
+
+        if (updateGoogleSheets) {
+            try {
+                this.sheetsService.initialize();
+                this.sheetsService.initializeSpreadsheet();
+                System.out.println("Google Sheets service initialized successfully");
+            } catch (Exception e) {
+                System.err.println("Failed to initialize Google Sheets service: " + e.getMessage());
+                this.updateGoogleSheets = false;
+            }
+        }
+
+        dataStorage.loadSystemState();
+        processedEmailIds = dataStorage.loadProcessedEmailIds();
+        jobApplicationsDb = dataStorage.loadJobApplicationsDb();
+
+        System.out.println("=== Job Application Manager Initialized ===");
+        System.out.println("Using dummy data: " + useDummyData);
+        System.out.println("Updating Google Sheets: " + updateGoogleSheets);
+        System.out.println("Previously processed emails: " + processedEmailIds.size());
+        System.out.println("Job applications in database: " + jobApplicationsDb.size());
+        System.out.println("AI Service model: " + model);
+        System.out.println("\n≡ƒöä Will process past week's unprocessed emails");
     }
 
-    /**
-     * Get job-related emails using search queries
-     */
-    public static void getJobRelatedEmails(Gmail service) throws IOException {
-        // Define search queries for job-related emails
-        String[] searchQueries = {
-            "subject:(application OR interview OR position OR job OR hiring OR recruitment)",
-            "from:(noreply OR hr OR recruiting OR talent OR careers)",
-            "body:(\"thank you for applying\" OR \"interview\" OR \"position\" OR \"application received\")",
-            "newer_than:6m" // Last 6 months
-        };
+    public void processJobApplicationEmails() {
+        System.out.println("\n=== Processing Job Application Emails ===");
 
-        for (String query : searchQueries) {
-            System.out.println("Searching with query: " + query);
+        if (useDummyData) {
+            processDummyEmails();
+        } else {
+            processRealEmails();
+        }
 
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setQ(query)
-                    .setMaxResults(100L)
-                    .execute();
+        dataStorage.saveSystemState();
+    }
 
-            List<Message> messages = response.getMessages();
-            if (messages != null && !messages.isEmpty()) {
-                System.out.println("Found " + messages.size() + " messages");
+    private void processDummyEmails() {
+        List<DummyEmailService.DummyEmail> dummyEmails = dummyEmailService.generateDummyEmails();
+        List<JobApplicationData> newlyProcessedEmails = new ArrayList<>();
+        List<JobApplicationData> newJobRelatedEmails = new ArrayList<>();
+        int ignoredEmails = 0;
+        int skippedEmails = 0;
 
-                for (Message message : messages) {
-                    processMessage(service, message);
+        int emailsToProcess = isFirstRun ? 20 : dummyEmails.size();
+        System.out.println("Processing up to " + emailsToProcess + " dummy emails...");
+
+        for (int i = 0; i < Math.min(emailsToProcess, dummyEmails.size()); i++) {
+            DummyEmailService.DummyEmail email = dummyEmails.get(i);
+
+            if (processedEmailIds.contains(email.getId())) {
+                skippedEmails++;
+                System.out.printf("  ΓÅ¡∩╕Å  SKIPPED: %s (already processed)\n",
+                        email.getSubject().substring(0, Math.min(50, email.getSubject().length())));
+                continue;
+            }
+
+            System.out.printf("\n≡ƒöì Processing email %d/%d: %s\n", i + 1, emailsToProcess, email.getSubject());
+
+            JobApplicationData jobData = emailAnalysisService.analyzeEmail(
+                    email.getId(), email.getSubject(), email.getFrom(), email.getDate(), email.getBody()
+            );
+
+            processEmailResult(jobData, newlyProcessedEmails, newJobRelatedEmails);
+
+            if (!jobData.isJobRelated()) {
+                ignoredEmails++;
+                System.out.printf("  Γ¥î IGNORED: Not job-related (confidence: %.1f%%)\n",
+                        jobData.getConfidenceScore() * 100);
+            }
+        }
+
+        reportingService.displayProcessingSummary(newlyProcessedEmails, newJobRelatedEmails,
+                ignoredEmails, skippedEmails, processedEmailIds.size(), jobApplicationsDb.size(), isFirstRun);
+    }
+
+    private void processRealEmails() {
+        try {
+            Set<String> unprocessedEmails = gmailService.findUnprocessedEmails(processedEmailIds);
+            System.out.printf("Found %d unprocessed emails from the past week\n", unprocessedEmails.size());
+
+            List<JobApplicationData> newlyProcessedEmails = new ArrayList<>();
+            List<JobApplicationData> newJobRelatedEmails = new ArrayList<>();
+            int ignoredEmails = 0;
+            int skippedEmails = 0;
+
+            for (String emailId : unprocessedEmails) {
+                try {
+                    GmailService.EmailData emailData = gmailService.getEmailContent(emailId);
+
+                    System.out.printf("\n≡ƒöì Processing: %s\n", emailData.getSubject());
+
+                    JobApplicationData jobData = emailAnalysisService.analyzeEmail(
+                            emailData.getId(), emailData.getSubject(), emailData.getFrom(),
+                            emailData.getDate(), emailData.getBody()
+                    );
+
+                    processEmailResult(jobData, newlyProcessedEmails, newJobRelatedEmails);
+
+                    if (!jobData.isJobRelated()) {
+                        ignoredEmails++;
+                        System.out.printf("  Γ¥î IGNORED: %s - Not job-related\n",
+                                jobData.getSubject().substring(0, Math.min(50, jobData.getSubject().length())));
+                    }
+
+                    // Small delay to be respectful to the API
+                    Thread.sleep(100);
+
+                } catch (Exception e) {
+                    System.err.printf("Error processing email %s: %s\n", emailId, e.getMessage());
                 }
-            } else {
-                System.out.println("No messages found for query: " + query);
+            }
+
+            reportingService.displayProcessingSummary(newlyProcessedEmails, newJobRelatedEmails,
+                    ignoredEmails, skippedEmails, processedEmailIds.size(), jobApplicationsDb.size(), isFirstRun);
+
+        } catch (Exception e) {
+            System.err.println("Error processing real emails: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void processEmailResult(JobApplicationData jobData,
+            List<JobApplicationData> newlyProcessedEmails,
+            List<JobApplicationData> newJobRelatedEmails) {
+        dataStorage.saveProcessedEmailId(jobData.getEmailId());
+        processedEmailIds.add(jobData.getEmailId());
+        newlyProcessedEmails.add(jobData);
+
+        if (jobData.isJobRelated()) {
+            newJobRelatedEmails.add(jobData);
+            dataStorage.saveJobApplicationData(jobData);
+            jobApplicationsDb.put(jobData.getEmailId(), jobData);
+            reportingService.displayJobApplicationData(jobData);
+
+            // Update Google Sheets if enabled
+            if (updateGoogleSheets) {
+                try {
+                    sheetsService.updateJobApplicationData(jobData);
+                    System.out.println("  ≡ƒÅï Updated job application in Google Sheets");
+                } catch (Exception e) {
+                    System.err.println("  ✖ Failed to update Google Sheets: " + e.getMessage());
+                }
             }
         }
     }
 
-    /**
-     * Process individual email message
-     */
-    private static void processMessage(Gmail service, Message message) throws IOException {
-        Message fullMessage = service.users().messages().get("me", message.getId()).execute();
-
-        // Extract basic info
-        String messageId = fullMessage.getId();
-        String threadId = fullMessage.getThreadId();
-
-        // Get headers
-        List<MessagePartHeader> headers = fullMessage.getPayload().getHeaders();
-        String subject = "";
-        String from = "";
-        String date = "";
-
-        for (MessagePartHeader header : headers) {
-            String name = header.getName();
-            if ("Subject".equals(name)) {
-                subject = header.getValue();
-            } else if ("From".equals(name)) {
-                from = header.getValue();
-            } else if ("Date".equals(name)) {
-                date = header.getValue();
-            }
-        }
-
-        // Get email body
-        String body = getMessageBody(fullMessage.getPayload());
-
-        // Print extracted info (you'll want to store this in your database)
-        System.out.println("=== EMAIL ===");
-        System.out.println("ID: " + messageId);
-        System.out.println("Subject: " + subject);
-        System.out.println("From: " + from);
-        System.out.println("Date: " + date);
-        System.out.println("Body Preview: " + (body.length() > 200 ? body.substring(0, 200) + "..." : body));
-        System.out.println("Full Body Length: " + body.length());
-        System.out.println();
-
-        // Here you would typically:
-        // 1. Use AI to classify this email (application confirmation, rejection, interview, etc.)
-        // 2. Extract structured data (company name, position, dates, etc.)
-        // 3. Store in your database
-        // 4. Update your application tracking system
+    public void viewJobApplications() {
+        reportingService.displayExistingJobApplications(jobApplicationsDb);
     }
 
-    /**
-     * Extract message body from MessagePart
-     */
-    private static String getMessageBody(MessagePart part) {
-        StringBuilder body = new StringBuilder();
-
-        if (part.getBody() != null && part.getBody().getData() != null) {
-            byte[] data = Base64.getUrlDecoder().decode(part.getBody().getData());
-            body.append(new String(data));
+    public void syncAllApplicationsToGoogleSheets() {
+        if (!updateGoogleSheets) {
+            System.out.println("Google Sheets updating is not enabled");
+            return;
         }
 
-        if (part.getParts() != null) {
-            for (MessagePart subPart : part.getParts()) {
-                if ("text/plain".equals(subPart.getMimeType())
-                        || "text/html".equals(subPart.getMimeType())) {
-                    body.append(getMessageBody(subPart));
+        System.out.println("\n=== Syncing All Job Applications to Google Sheets ===");
+        int syncCount = 0;
+
+        for (JobApplicationData jobData : jobApplicationsDb.values()) {
+            if (jobData.isJobRelated()) {
+                try {
+                    sheetsService.updateJobApplicationData(jobData);
+                    syncCount++;
+                    System.out.printf("  ≡ƒÅï Synced: %s - %s\n",
+                            jobData.getCompanyName() != null ? jobData.getCompanyName() : "Unknown",
+                            jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "Unknown");
+                } catch (Exception e) {
+                    System.err.printf("  ✖ Failed to sync application %s: %s\n",
+                            jobData.getEmailId(), e.getMessage());
                 }
             }
         }
 
-        return body.toString();
+        System.out.printf("\nSync complete. %d applications synchronized to Google Sheets.\n", syncCount);
     }
 
-    /**
-     * Get all emails (be careful with this - could be thousands)
-     */
-    public static void getAllEmails(Gmail service) throws IOException {
-        System.out.println("WARNING: This will retrieve ALL emails. Consider using getJobRelatedEmails() instead.");
-
-        String pageToken = null;
-        do {
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setMaxResults(100L)
-                    .setPageToken(pageToken)
-                    .execute();
-
-            List<Message> messages = response.getMessages();
-            if (messages != null) {
-                System.out.println("Processing " + messages.size() + " messages...");
-                for (Message message : messages) {
-                    processMessage(service, message);
-                }
+    public void formatGoogleSheet() {
+        if (updateGoogleSheets) {
+            try {
+                sheetsService.formatSpreadsheet();
+                System.out.println("Google Sheets formatting applied successfully");
+            } catch (Exception e) {
+                System.err.println("Failed to format Google Sheets: " + e.getMessage());
             }
-
-            pageToken = response.getNextPageToken();
-        } while (pageToken != null);
-    }
-
-    /**
-     * Get emails from specific time period
-     */
-    public static void getEmailsFromPeriod(Gmail service, String timeQuery) throws IOException {
-        System.out.println("Retrieving emails from period: " + timeQuery);
-
-        String pageToken = null;
-        do {
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setQ(timeQuery)
-                    .setMaxResults(100L)
-                    .setPageToken(pageToken)
-                    .execute();
-
-            List<Message> messages = response.getMessages();
-            if (messages != null) {
-                System.out.println("Processing " + messages.size() + " messages...");
-                for (Message message : messages) {
-                    processMessage(service, message);
-                }
-            }
-
-            pageToken = response.getNextPageToken();
-        } while (pageToken != null);
-    }
-
-    /**
-     * Get emails from specific senders
-     */
-    public static void getEmailsFromSenders(Gmail service, String[] senders) throws IOException {
-        for (String sender : senders) {
-            System.out.println("Retrieving emails from: " + sender);
-
-            String query = "from:" + sender;
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setQ(query)
-                    .setMaxResults(100L)
-                    .execute();
-
-            List<Message> messages = response.getMessages();
-            if (messages != null && !messages.isEmpty()) {
-                System.out.println("Found " + messages.size() + " messages from " + sender);
-
-                for (Message message : messages) {
-                    processMessage(service, message);
-                }
-            } else {
-                System.out.println("No messages found from: " + sender);
-            }
+        } else {
+            System.out.println("Google Sheets updating is not enabled");
         }
     }
 
-    /**
-     * Search emails with custom query
-     */
-    public static void searchEmails(Gmail service, String customQuery) throws IOException {
-        System.out.println("Searching emails with query: " + customQuery);
+    public void exportApplicationsToCSV(String filePath) {
+        try {
+            int count = dataStorage.exportJobApplicationsToCSV(jobApplicationsDb, filePath);
+            System.out.printf("Exported %d job applications to %s\n", count, filePath);
+        } catch (Exception e) {
+            System.err.println("Failed to export applications to CSV: " + e.getMessage());
+        }
+    }
 
-        String pageToken = null;
-        do {
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setQ(customQuery)
-                    .setMaxResults(100L)
-                    .setPageToken(pageToken)
-                    .execute();
+    // Method to update existing applications based on new emails
+    public void updateExistingApplications() {
+        if (!updateGoogleSheets) {
+            System.out.println("Google Sheets updating is not enabled");
+            return;
+        }
 
-            List<Message> messages = response.getMessages();
-            if (messages != null) {
-                System.out.println("Found " + messages.size() + " messages");
-                for (Message message : messages) {
-                    processMessage(service, message);
-                }
-            }
+        System.out.println("\n=== Updating Existing Applications ===");
 
-            pageToken = response.getNextPageToken();
-        } while (pageToken != null);
+        // This would involve more complex logic to match new emails with existing applications
+        // For example, looking for follow-ups on the same thread or emails with similar subjects
+        // For now, just a placeholder
+        System.out.println("This feature is not yet implemented");
     }
 
     public static void main(String[] args) {
+        ApplicationManager manager = new ApplicationManager();
+
         try {
-            Gmail service = buildGmailService();
+            // Initialize with real Gmail data (false) or dummy data (true)
+            // Second parameter controls Google Sheets integration
+            boolean useDummyData = false;
+            boolean updateGoogleSheets = true;
 
-            // Use this for targeted job-related email retrieval
-            getJobRelatedEmails(service);
+            manager.initialize(useDummyData, updateGoogleSheets);
 
-            // Other usage examples:
-            // Get emails from last 3 months
-            // getEmailsFromPeriod(service, "newer_than:3m");
-            // Get emails from specific senders
-            // String[] jobSites = {"linkedin.com", "indeed.com", "glassdoor.com"};
-            // getEmailsFromSenders(service, jobSites);
-            // Custom search
-            // searchEmails(service, "subject:interview newer_than:1m");
-            // Uncomment below to get ALL emails (not recommended for initial testing)
-            // getAllEmails(service);
-        } catch (GeneralSecurityException | IOException e) {
+            // Process new job application emails
+            manager.processJobApplicationEmails();
+
+            // Sync all existing applications to Google Sheets
+            // This ensures the sheet has all applications, not just new ones
+            manager.syncAllApplicationsToGoogleSheets();
+
+            // Apply formatting to Google Sheet
+            manager.formatGoogleSheet();
+
+            // Optional: Export to CSV as a backup
+            // manager.exportApplicationsToCSV("job_applications_export.csv");
+            // Optional: View applications in console
+            // manager.viewJobApplications();
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }

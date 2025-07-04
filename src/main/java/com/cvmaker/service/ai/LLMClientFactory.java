@@ -2,8 +2,8 @@ package com.cvmaker.service.ai;
 
 public class LLMClientFactory {
 
-    public static LLMClient createClient(LLMProvider provider, LLMModel model) {
-        return switch (provider) {
+    public static LLMClient createClient(LLMModel model) {
+        return switch (model.getProvider()) {
             case OPENAI ->
                 new OpenAIClient();
             case LOCAL ->
