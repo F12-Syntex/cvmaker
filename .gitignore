@@ -8,3 +8,5 @@ github_downloader.log
 generation
 output
 tokens/StoredCredential
+playwright-session
+reed-session

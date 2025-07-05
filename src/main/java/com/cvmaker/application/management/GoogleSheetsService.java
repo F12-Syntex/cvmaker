@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
@@ -97,6 +98,147 @@ public class GoogleSheetsService {
         }
     }
 
+    // NEW METHOD: Bulk update all applications in one operation
+    public void bulkUpdateAllApplications(Map<String, JobApplicationData> consolidatedApplications) throws IOException {
+        System.out.println("Starting bulk update of " + consolidatedApplications.size() + " applications...");
+
+        // Clear existing data (keeping headers)
+        clearExistingData();
+
+        // Prepare all data rows
+        List<List<Object>> allRows = new ArrayList<>();
+        List<JobApplicationData> applicationsWithUrls = new ArrayList<>();
+
+        for (JobApplicationData jobData : consolidatedApplications.values()) {
+            if (jobData.isJobRelated()) {
+                String formattedDate = formatDateToHumanReadable(jobData.getDate());
+                String formattedInterviewDate = formatDateToHumanReadable(jobData.getInterviewDate());
+
+                List<Object> rowData = Arrays.asList(
+                        // VISIBLE COLUMNS (A-J)
+                        jobData.getCompanyName() != null ? jobData.getCompanyName() : "", // A: Company
+                        jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "", // B: Position
+                        formattedDate, // C: Date Applied
+                        jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied", // D: Status
+                        jobData.getProvider() != null ? jobData.getProvider() : "", // E: Provider
+                        jobData.getWorkLocation() != null ? jobData.getWorkLocation() : "", // F: Work Location
+                        formattedInterviewDate, // G: Interview Date
+                        "View Email", // H: Email Link (will be converted to hyperlink)
+                        jobData.getApplicationUrl() != null ? "Apply" : "", // I: Application URL (will be converted to hyperlink)
+                        combineNotes(jobData), // J: Notes
+
+                        // HIDDEN COLUMNS (K-U) - for data storage
+                        jobData.getWorkType() != null ? jobData.getWorkType() : "", // K: Work Type
+                        jobData.getSalaryRange() != null ? jobData.getSalaryRange() : "", // L: Salary Range
+                        jobData.getContactPerson() != null ? jobData.getContactPerson() : "", // M: Contact Person
+                        jobData.getNextSteps() != null ? jobData.getNextSteps() : "", // N: Next Steps
+                        jobData.getEmailId(), // O: Email ID
+                        jobData.getContactEmail() != null ? jobData.getContactEmail() : "", // P: Contact Email
+                        jobData.getApplicationDeadline() != null ? jobData.getApplicationDeadline() : "", // Q: Deadline
+                        jobData.getRequiredSkills() != null ? jobData.getRequiredSkills() : "", // R: Skills
+                        jobData.getRejectionReason() != null ? jobData.getRejectionReason() : "", // S: Rejection Reason
+                        jobData.getOfferDetails() != null ? jobData.getOfferDetails() : "", // T: Offer Details
+                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) // U: Last Updated
+                );
+
+                allRows.add(rowData);
+                applicationsWithUrls.add(jobData);
+            }
+        }
+
+        if (allRows.isEmpty()) {
+            System.out.println("No job-related applications to sync.");
+            return;
+        }
+
+        // Bulk insert all data at once
+        ValueRange body = new ValueRange().setValues(allRows);
+        sheetsService.spreadsheets().values()
+                .update(spreadsheetId, "A2:U" + (allRows.size() + 1), body)
+                .setValueInputOption("RAW")
+                .execute();
+
+        System.out.println("Inserted " + allRows.size() + " rows of data");
+
+        // Add hyperlinks for all rows in batch
+        addAllHyperlinksInBatch(applicationsWithUrls);
+
+        System.out.println("Bulk update completed successfully!");
+    }
+
+    private void clearExistingData() throws IOException {
+        // Get the current data to determine how many rows to clear
+        ValueRange response = sheetsService.spreadsheets().values()
+                .get(spreadsheetId, "A2:U")
+                .execute();
+
+        List<List<Object>> values = response.getValues();
+        if (values != null && !values.isEmpty()) {
+            int rowsToDelete = values.size();
+
+            // Clear the range (this preserves formatting but removes data)
+            com.google.api.services.sheets.v4.model.ClearValuesRequest clearRequest = new com.google.api.services.sheets.v4.model.ClearValuesRequest();
+            sheetsService.spreadsheets().values()
+                    .clear(spreadsheetId, "A2:U" + (rowsToDelete + 1), clearRequest)
+                    .execute();
+
+            System.out.println("Cleared " + rowsToDelete + " existing rows");
+        }
+    }
+
+    private void addAllHyperlinksInBatch(List<JobApplicationData> applications) throws IOException {
+        List<Request> requests = new ArrayList<>();
+
+        for (int i = 0; i < applications.size(); i++) {
+            JobApplicationData jobData = applications.get(i);
+            int rowIndex = i + 2; // +2 because data starts at row 2 (1-indexed)
+
+            // Add hyperlink for email link (column H = index 7)
+            if (jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
+                requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
+                        .setRange(new GridRange()
+                                .setSheetId(0)
+                                .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
+                                .setStartColumnIndex(7).setEndColumnIndex(8))
+                        .setRows(Collections.singletonList(new RowData()
+                                .setValues(Collections.singletonList(new CellData()
+                                        .setUserEnteredValue(new ExtendedValue()
+                                                .setFormulaValue("=HYPERLINK(\"" + jobData.getEmailLink() + "\", \"📧 View\")"))))))
+                        .setFields("userEnteredValue")));
+            }
+
+            // Add hyperlink for application URL (column I = index 8)
+            if (jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
+                requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
+                        .setRange(new GridRange()
+                                .setSheetId(0)
+                                .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
+                                .setStartColumnIndex(8).setEndColumnIndex(9))
+                        .setRows(Collections.singletonList(new RowData()
+                                .setValues(Collections.singletonList(new CellData()
+                                        .setUserEnteredValue(new ExtendedValue()
+                                                .setFormulaValue("=HYPERLINK(\"" + jobData.getApplicationUrl() + "\", \"🔗 Apply\")"))))))
+                        .setFields("userEnteredValue")));
+            }
+        }
+
+        // Execute all hyperlink updates in batches to avoid request size limits
+        if (!requests.isEmpty()) {
+            int batchSize = 100; // Process in batches of 100 requests
+            for (int i = 0; i < requests.size(); i += batchSize) {
+                int endIndex = Math.min(i + batchSize, requests.size());
+                List<Request> batch = requests.subList(i, endIndex);
+
+                sheetsService.spreadsheets().batchUpdate(spreadsheetId,
+                        new BatchUpdateSpreadsheetRequest().setRequests(batch)).execute();
+
+                System.out.println("Added hyperlinks for batch " + (i / batchSize + 1) + "/"
+                        + ((requests.size() + batchSize - 1) / batchSize));
+            }
+        }
+    }
+
+    // Keep the original single update method for individual updates
     public void updateJobApplicationData(JobApplicationData jobData) throws IOException {
         List<List<Object>> existingData = getExistingData();
 
@@ -264,7 +406,7 @@ public class GoogleSheetsService {
             if (notes.length() > 0) {
                 notes.append(" | ");
             }
-            notes.append("🎯 ").append(jobData.getNextSteps().trim());
+            notes.append("➡️ ").append(jobData.getNextSteps().trim());
         }
 
         if (jobData.getRejectionReason() != null && !jobData.getRejectionReason().trim().isEmpty()) {

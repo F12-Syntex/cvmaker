@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -66,59 +65,65 @@ public class GmailService {
     }
 
     public Set<String> findUnprocessedEmails(Set<String> processedEmailIds) throws IOException {
+        // More comprehensive search queries
         String[] searchQueries = {
-            "(" + String.join(" OR ", new String[]{
-                "\"application received\"",
-                "\"thank you for applying\"",
-                "\"application confirmation\"",
-                "interview",
-                "\"schedule an interview\"",
-                "\"interview invitation\"",
-                "\"phone screen\"",
-                "\"application status\"",
-                "\"hiring decision\"",
-                "\"next steps\"",
-                "\"moving forward\""
-            }) + ") newer_than:7d",
-            "(" + String.join(" OR ", new String[]{
-                "\"unfortunately\"",
-                "\"not selected\"",
-                "\"decided to move forward with other candidates\"",
-                "\"job offer\"",
-                "\"pleased to offer\"",
-                "\"congratulations\"",
-                "\"offer letter\""
-            }) + ") newer_than:7d",
-            "(" + String.join(" OR ", new String[]{
-                "\"coding assessment\"",
-                "\"technical test\"",
-                "\"complete the following\"",
-                "\"your application\"",
-                "\"your interview\"",
-                "\"your submission\"",
-                "\"your candidacy\""
-            }) + ") newer_than:7d",
-            "from:(hr OR recruiting OR talent OR careers OR noreply OR no-reply) (application OR interview OR status OR decision OR position OR job) newer_than:7d"
-        };
+            // Basic job application terms
+            "(\"application received\" OR \"thank you for applying\" OR \"application confirmation\") newer_than:7d",
+            // Interview related
+            "(interview OR \"schedule an interview\" OR \"interview invitation\" OR \"phone screen\") newer_than:7d",
+            // Status updates
+            "(\"application status\" OR \"hiring decision\" OR \"next steps\" OR \"moving forward\") newer_than:7d",
+            // Rejections and offers
+            "(unfortunately OR \"not selected\" OR \"decided to move forward\" OR \"job offer\" OR \"pleased to offer\") newer_than:7d",
+            // Assessments and tests
+            "(\"coding assessment\" OR \"technical test\" OR \"complete the following\" OR assessment OR challenge) newer_than:7d",
+            // From common job-related senders
+            "from:(hr OR recruiting OR talent OR careers OR noreply OR no-reply) newer_than:7d",
+            // Broader job-related terms
+            "(position OR role OR \"your application\" OR \"your interview\" OR \"your submission\" OR candidate) newer_than:7d",
+            // Company-specific patterns
+            "(\"we received your\" OR \"thank you for your interest\" OR \"regarding your application\") newer_than:7d",
+            // Additional comprehensive search
+            "subject:(job OR position OR interview OR application OR offer OR rejected OR assessment) newer_than:7d",};
 
         Set<String> allMessageIds = new HashSet<>();
+        int totalFound = 0;
 
-        for (String query : searchQueries) {
-            ListMessagesResponse response = service.users().messages().list("me")
-                    .setQ(query)
-                    .setMaxResults(200L)
-                    .execute();
+        for (int i = 0; i < searchQueries.length; i++) {
+            String query = searchQueries[i];
+            System.out.println("Executing search query " + (i + 1) + "/" + searchQueries.length + ": " + query);
 
-            List<Message> messages = response.getMessages();
-            if (messages != null && !messages.isEmpty()) {
-                for (Message message : messages) {
-                    if (!processedEmailIds.contains(message.getId())) {
-                        allMessageIds.add(message.getId());
+            try {
+                ListMessagesResponse response = service.users().messages().list("me")
+                        .setQ(query)
+                        .setMaxResults(500L)
+                        .execute();
+
+                List<Message> messages = response.getMessages();
+                if (messages != null && !messages.isEmpty()) {
+                    int newMessages = 0;
+                    for (Message message : messages) {
+                        if (!processedEmailIds.contains(message.getId())) {
+                            if (allMessageIds.add(message.getId())) { // Only count if newly added
+                                newMessages++;
+                            }
+                        }
                     }
+                    System.out.println("  Found " + messages.size() + " total, " + newMessages + " new unprocessed emails");
+                    totalFound += newMessages;
+                } else {
+                    System.out.println("  No emails found for this query");
                 }
+
+                // Small delay between queries to be respectful to the API
+                Thread.sleep(200);
+
+            } catch (Exception e) {
+                System.err.println("Error executing query " + (i + 1) + ": " + e.getMessage());
             }
         }
 
+        System.out.println("Total unique unprocessed emails found: " + allMessageIds.size());
         return allMessageIds;
     }
 

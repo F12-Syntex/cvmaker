@@ -213,23 +213,21 @@ public class ApplicationManager {
         // Group applications by company and keep only the latest/most important status for each
         Map<String, JobApplicationData> consolidatedApplications = consolidateApplicationsByCompany();
 
-        int syncCount = 0;
-        for (JobApplicationData jobData : consolidatedApplications.values()) {
-            if (jobData.isJobRelated()) {
-                try {
-                    sheetsService.updateJobApplicationData(jobData);
-                    syncCount++;
-                    System.out.printf("  ✓ Synced: %s - %s\n",
-                            jobData.getCompanyName() != null ? jobData.getCompanyName() : "Unknown",
-                            jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "Unknown");
-                } catch (Exception e) {
-                    System.err.printf("  ✗ Failed to sync application %s: %s\n",
-                            jobData.getEmailId(), e.getMessage());
-                }
-            }
+        if (consolidatedApplications.isEmpty()) {
+            System.out.println("No job-related applications to sync.");
+            return;
         }
 
-        System.out.printf("\nSync complete. %d applications synchronized to Google Sheets.\n", syncCount);
+        try {
+            // Use the new bulk update method instead of individual updates
+            sheetsService.bulkUpdateAllApplications(consolidatedApplications);
+
+            System.out.printf("\nBulk sync complete. %d applications synchronized to Google Sheets.\n",
+                    consolidatedApplications.size());
+        } catch (Exception e) {
+            System.err.println("Failed to bulk sync applications: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
 // New method to consolidate applications by company
