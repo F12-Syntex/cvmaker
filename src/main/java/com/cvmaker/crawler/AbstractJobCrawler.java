@@ -5,7 +5,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Map;
-import java.util.UUID;
 
 import com.cvmaker.CVGenerator;
 import com.cvmaker.configuration.ConfigManager;
@@ -144,13 +143,26 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             }
 
             // Create unique job folder
-            String uuid = UUID.randomUUID().toString();
+            String title = job.getTitle();
+            // Remove everything after the 5th space
+            String[] parts = title.split(" ");
+            if (parts.length > 5) {
+                title = String.join(" ", Arrays.copyOfRange(parts, 0, 5));
+            }
+            // Remove everything before the first '.'
+            int dotIndex = title.indexOf('.');
+            if (dotIndex != -1) {
+                title = title.substring(dotIndex + 1).trim();
+            }
+            String uuid = "Job-" + title.replaceAll("[^a-zA-Z0-9-_ ]", "").replaceAll("\\s+", "_");
             String jobFolder = config.getOutputDirectory() + "/" + uuid;
             Path jobFolderPath = Paths.get(jobFolder);
             Files.createDirectories(jobFolderPath);
 
             // Create config for this specific job
             config.setJobDescriptionContent(jobContent);
+
+            System.out.println(jobContent);
 
             // Generate CV using the simplified CVGenerator
             CVGenerator generator = new CVGenerator(config);
@@ -182,7 +194,6 @@ public abstract class AbstractJobCrawler implements JobCrawler {
         }
     }
 
-    // Add method to AbstractJobCrawler.java
     protected int adjustedDelay(int baseDelay) {
         // Calculate adjusted delay based on crawling speed (1-10)
         // Speed 10 = fastest (0.3x delay), Speed 1 = slowest (1.5x delay)

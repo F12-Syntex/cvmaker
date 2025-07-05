@@ -21,9 +21,6 @@ public class JobCrawlerApp {
             customConfig.setMaxApplications(5);
             customConfig.setDebugMode(true);
 
-            JobCrawler secondCrawler = CrawlerFactory.createCrawler(CrawlerType.REED, customConfig);
-            manager.addCrawler(secondCrawler);
-
             // Start a specific crawler
             manager.startCrawler(reedCrawler);
 

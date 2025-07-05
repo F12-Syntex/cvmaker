@@ -24,6 +24,11 @@ public class CrawlerConfig {
     // Crawler settings
     private int maxApplications;
     private boolean debugMode;
+    
+    // Visualization settings
+    private boolean visualizationEnabled;
+    private int pollingRate;
+    private int crawlingSpeed;
 
     // Browser settings
     private String browserDataDir;
@@ -71,10 +76,6 @@ public class CrawlerConfig {
     private String submitButtonSelectors;
     private String confirmationSelectors;
 
-    // In CrawlerConfig.java - add new fields
-    private int pollingRate; // milliseconds between polling actions
-    private int crawlingSpeed; // general speed multiplier (1-10)
-
     public CrawlerConfig() throws IOException {
         this(DEFAULT_CONFIG_FILE);
     }
@@ -120,6 +121,11 @@ public class CrawlerConfig {
         // Crawler settings
         this.maxApplications = 10;
         this.debugMode = false;
+        
+        // Visualization and speed settings
+        this.visualizationEnabled = true;
+        this.pollingRate = 500;
+        this.crawlingSpeed = 5;
 
         // Browser settings
         this.browserDataDir = "playwright-session";
@@ -147,9 +153,6 @@ public class CrawlerConfig {
         this.processingFallbackDelay = 5000;
         this.confirmationDialogDelay = 2000;
 
-        this.pollingRate = 500;
-        this.crawlingSpeed = 5;
-
         // Site-specific defaults
         switch (crawlerName.toLowerCase()) {
             case "reed":
@@ -165,7 +168,7 @@ public class CrawlerConfig {
                 setReedDefaults(); // Default to Reed
         }
     }
-
+    
     private void setReedDefaults() {
         // Site settings
         this.baseUrl = "https://www.reed.co.uk/";
@@ -187,18 +190,18 @@ public class CrawlerConfig {
         this.submitButtonSelectors = "button:has-text('Submit Application'),button:has-text('Submit'),a:has-text('Submit Application'),a:has-text('Submit'),[data-qa*='submit'],button[class*='submit'],.submit-button,.btn-submit";
         this.confirmationSelectors = "button:has-text('OK'),button:has-text('Ok'),button:has-text('Confirm'),button:has-text('Yes'),[data-qa*='confirm'],.modal button:has-text('OK'),.dialog button:has-text('OK')";
     }
-
+    
     private void setIndeedDefaults() {
         // Indeed-specific settings
         this.baseUrl = "https://www.indeed.com/";
         this.searchInputSelector = "input#text-input-what,input[name='q']";
-
+        
         // Job search selectors
         this.jobCardSelectors = ".job_seen_beacon,.resultContent,div[data-testid='job-card']";
         this.jobDescriptionSelectors = "#jobDescriptionText,#job-description";
         this.easyApplySelectors = ".iaP,.iaJobTitle button,button:has-text('Apply easily')";
         this.easyApplyKeywords = "apply now,easy apply,apply easily,quick apply";
-
+        
         // Application selectors
         this.applyButtonSelectors = ".ia-IndeedApplyButton,button:has-text('Apply now'),a:has-text('Apply now')";
         this.updateButtonSelectors = "button:has-text('Edit'),button:has-text('Update')";
@@ -208,18 +211,18 @@ public class CrawlerConfig {
         this.submitButtonSelectors = "button[type='submit'],button:has-text('Submit'),button:has-text('Apply')";
         this.confirmationSelectors = ".modal button:has-text('OK'),.dialog button:has-text('Done'),button:has-text('Continue')";
     }
-
+    
     private void setLinkedInDefaults() {
         // LinkedIn-specific settings
         this.baseUrl = "https://www.linkedin.com/jobs/";
         this.searchInputSelector = "input.jobs-search-box__text-input";
-
+        
         // Job search selectors
         this.jobCardSelectors = ".job-card-container,.jobs-search-results__list-item";
         this.jobDescriptionSelectors = ".jobs-description,.jobs-box__html-content";
         this.easyApplySelectors = "button.jobs-apply-button,button:has-text('Easy Apply')";
         this.easyApplyKeywords = "easy apply";
-
+        
         // Application selectors
         this.applyButtonSelectors = "button.jobs-apply-button,button:has-text('Apply'),button:has-text('Easy Apply')";
         this.updateButtonSelectors = "button:has-text('Edit')";
@@ -236,13 +239,22 @@ public class CrawlerConfig {
         if (configCrawlerName != null && !configCrawlerName.isEmpty()) {
             this.crawlerName = configCrawlerName;
         }
-
+        
         // CV Generation
         this.cvConfigFile = properties.getProperty("cv.config.file", this.cvConfigFile);
 
         // Crawler settings
         this.maxApplications = Integer.parseInt(properties.getProperty("crawler.max.applications", String.valueOf(this.maxApplications)));
         this.debugMode = Boolean.parseBoolean(properties.getProperty("crawler.debug.mode", String.valueOf(this.debugMode)));
+        
+        // Visualization and speed settings
+        this.visualizationEnabled = Boolean.parseBoolean(properties.getProperty("crawler.visualization.enabled", String.valueOf(this.visualizationEnabled)));
+        this.pollingRate = Integer.parseInt(properties.getProperty("crawler.polling.rate", String.valueOf(this.pollingRate)));
+        this.crawlingSpeed = Integer.parseInt(properties.getProperty("crawler.speed", String.valueOf(this.crawlingSpeed)));
+        
+        // Validate crawling speed (1-10)
+        if (this.crawlingSpeed < 1) this.crawlingSpeed = 1;
+        if (this.crawlingSpeed > 10) this.crawlingSpeed = 10;
 
         // Browser settings
         this.browserDataDir = properties.getProperty("browser.data.dir", this.browserDataDir);
@@ -289,11 +301,8 @@ public class CrawlerConfig {
         this.processingSelectors = properties.getProperty("selectors.processing", this.processingSelectors);
         this.submitButtonSelectors = properties.getProperty("selectors.submit.button", this.submitButtonSelectors);
         this.confirmationSelectors = properties.getProperty("selectors.confirmation", this.confirmationSelectors);
-
-        this.pollingRate = Integer.parseInt(properties.getProperty("crawler.polling.rate", String.valueOf(this.pollingRate)));
-        this.crawlingSpeed = Integer.parseInt(properties.getProperty("crawler.speed", String.valueOf(this.crawlingSpeed)));
     }
-
+    
     /**
      * Create a site-specific configuration by name
      */

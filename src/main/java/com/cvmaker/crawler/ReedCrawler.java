@@ -1,3 +1,4 @@
+// File: src\main\java\com\cvmaker\crawler\ReedCrawler.java
 package com.cvmaker.crawler;
 
 import java.nio.file.Files;
@@ -13,6 +14,8 @@ import com.microsoft.playwright.options.WaitForSelectorState;
  */
 public class ReedCrawler extends AbstractJobCrawler {
 
+    private PageVisualizer visualizer;
+
     public ReedCrawler() throws Exception {
         super();
     }
@@ -27,9 +30,28 @@ public class ReedCrawler extends AbstractJobCrawler {
     }
 
     @Override
+    public void initialize() throws Exception {
+        super.initialize();
+
+        // Enable visualization mode if configured
+        if (crawlerConfig.isVisualizationEnabled()) {
+            System.out.println("Visualization mode enabled - you will see highlighted elements during operation");
+        }
+    }
+
+    @Override
+    public void setupBrowser() {
+        super.setupBrowser();
+
+        // Initialize the visualizer after browser is set up
+        this.visualizer = new PageVisualizer(page, crawlerConfig.isVisualizationEnabled());
+    }
+
+    @Override
     public void processJobsAndApply() {
         try {
             // Navigate to job search
+            visualizer.visualizeAction("Navigating to " + crawlerConfig.getBaseUrl());
             page.navigate(crawlerConfig.getBaseUrl());
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
 
@@ -53,6 +75,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             System.out.println("Starting job search - looking for Easy Apply jobs only...");
             System.out.println("Maximum applications to submit: " + crawlerConfig.getMaxApplications());
+            visualizer.visualizeAction("Searching for Easy Apply jobs...");
 
             // Process jobs one by one
             while (applicationsSubmitted < crawlerConfig.getMaxApplications()) {
@@ -60,11 +83,13 @@ public class ReedCrawler extends AbstractJobCrawler {
 
                 if (job == null) {
                     System.out.println("No more Easy Apply jobs found or reached application limit");
+                    visualizer.visualizeAction("No more Easy Apply jobs found");
                     break;
                 }
 
-                // Wait for job card to update - reduced wait time
-                page.waitForTimeout(Math.max(500, crawlerConfig.getJobCardLoadDelay() / 2));
+                // Wait for job card to update - with adjusted timing
+                page.waitForTimeout(adjustedDelay(crawlerConfig.getJobCardLoadDelay()));
+                visualizer.visualizeAction("Analyzing job: " + job.getTitle());
 
                 // Extract and print job description
                 if (crawlerConfig.isDebugMode()) {
@@ -73,54 +98,70 @@ public class ReedCrawler extends AbstractJobCrawler {
 
                 // Extract job description
                 String jobDescription = extractJobDescriptionFromCard();
+                visualizer.visualizeAction("Extracted job description (" + jobDescription.length() + " chars)");
 
                 // Generate CV for this job
+                visualizer.visualizeAction("Generating tailored CV...");
                 Path generatedCvPath = generateCVForJob(job, jobDescription);
 
                 if (generatedCvPath != null && Files.exists(generatedCvPath)) {
                     // Apply for the job
+                    visualizer.visualizeAction("Starting application process");
                     boolean applicationSuccess = applyForJob(generatedCvPath);
 
                     if (applicationSuccess) {
                         applicationsSubmitted++;
-                        System.out.println("Successfully applied to job " + applicationsSubmitted + "/" + crawlerConfig.getMaxApplications());
+                        visualizer.visualizeAction("Application submitted! (" + applicationsSubmitted + "/"
+                                + crawlerConfig.getMaxApplications() + ")");
+                        System.out.println("Successfully applied to job " + applicationsSubmitted
+                                + "/" + crawlerConfig.getMaxApplications());
+                    } else {
+                        visualizer.visualizeAction("Application failed");
                     }
                 } else {
                     System.out.println("Failed to generate CV for job: " + job.getTitle());
+                    visualizer.visualizeAction("CV generation failed");
                 }
 
-                // Reduced wait time between applications
-                page.waitForTimeout(Math.max(1000, crawlerConfig.getApplicationDelay() / 2));
+                // Wait between applications - with adjusted timing
+                page.waitForTimeout(adjustedDelay(crawlerConfig.getApplicationDelay()));
             }
 
             printSessionSummary();
+            visualizer.visualizeAction("Crawler session completed");
 
         } catch (Exception e) {
             e.printStackTrace();
+            visualizer.visualizeAction("Error: " + e.getMessage());
         }
     }
 
     private boolean performJobSearch() {
         try {
             // First wait a short time for page to fully load
-            page.waitForTimeout(500);
+            page.waitForTimeout(adjustedDelay(500));
 
+            visualizer.visualizeAction("Looking for search input");
+            visualizer.highlightElements(crawlerConfig.getSearchInputSelector());
             Locator searchInput = page.locator(crawlerConfig.getSearchInputSelector()).first();
 
             // Check if search input exists and is visible
             if (searchInput == null || !searchInput.isVisible()) {
                 System.out.println("Search input not found or not visible");
+                visualizer.visualizeAction("Search input not found");
                 return false;
             }
 
             searchInput.click();
+            visualizer.visualizeAction("Typing: " + crawlerConfig.getSearchKeywords());
             searchInput.fill(crawlerConfig.getSearchKeywords());
             searchInput.press("Enter");
+            visualizer.visualizeAction("Searching...");
 
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
 
-            // Reduced wait time for search results
-            page.waitForTimeout(Math.max(1000, crawlerConfig.getSearchResultsDelay() / 2));
+            // Wait for search results - with adjusted timing
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getSearchResultsDelay()));
 
             // Verify search was successful by checking for job results
             String[] jobSelectors = crawlerConfig.getJobCardSelectors().split(",");
@@ -128,9 +169,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             for (String selector : jobSelectors) {
                 try {
+                    visualizer.highlightElements(selector.trim());
                     Locator elements = page.locator(selector.trim());
                     if (elements.count() > 0) {
                         foundResults = true;
+                        visualizer.visualizeAction("Found " + elements.count() + " job results");
                         break;
                     }
                 } catch (Exception e) {
@@ -142,6 +185,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
         } catch (Exception e) {
             System.out.println("Error performing job search: " + e.getMessage());
+            visualizer.visualizeAction("Search error: " + e.getMessage());
             return false;
         }
     }
@@ -149,6 +193,7 @@ public class ReedCrawler extends AbstractJobCrawler {
     private boolean handleLoginIfRequired() {
         try {
             System.out.println("Login may be required. Checking for login elements...");
+            visualizer.visualizeAction("Checking if login is required");
 
             // Look for login form elements (username/email input, password input, login button)
             Locator emailInput = page.locator("input[type='email'], input[name='email'], input[id*='email'], input[id*='username']").first();
@@ -161,27 +206,42 @@ public class ReedCrawler extends AbstractJobCrawler {
 
                 System.out.println("Login form detected. Please provide login credentials to continue.");
                 System.out.println("This crawler requires you to manually log in.");
+                visualizer.visualizeAction("Please log in manually");
+
+                // Highlight login elements to help user
+                visualizer.highlightElements("input[type='email'], input[name='email'], input[id*='email'], input[id*='username']");
+                visualizer.highlightElements("input[type='password']");
+                visualizer.highlightElements("button[type='submit'], input[type='submit'], button:has-text('Sign in'), button:has-text('Log in')");
 
                 // Wait for user to complete login manually
                 System.out.println("Waiting for 30 seconds for manual login...");
-                page.waitForTimeout(30000);
+                for (int i = 30; i > 0; i--) {
+                    if (i % 5 == 0) {
+                        visualizer.visualizeAction("Waiting for login: " + i + " seconds left");
+                    }
+                    page.waitForTimeout(1000);
+                }
 
                 // Check if login was successful
                 boolean loginSuccess = !page.url().contains("login") && !page.url().contains("signin");
                 if (loginSuccess) {
                     System.out.println("Login appears successful. Continuing with job search.");
+                    visualizer.visualizeAction("Login successful");
                     return true;
                 } else {
                     System.out.println("Login may have failed. Attempting to continue anyway.");
+                    visualizer.visualizeAction("Login may have failed");
                     return false;
                 }
             } else {
                 System.out.println("No login form detected, but search failed. Site may be experiencing issues.");
+                visualizer.visualizeAction("No login form found");
                 return false;
             }
 
         } catch (Exception e) {
             System.out.println("Error handling login: " + e.getMessage());
+            visualizer.visualizeAction("Login handling error");
             return false;
         }
     }
@@ -190,9 +250,11 @@ public class ReedCrawler extends AbstractJobCrawler {
         try {
             String[] jobSelectors = crawlerConfig.getJobCardSelectors().split(",");
             System.out.println("Looking for Easy Apply jobs...");
+            visualizer.visualizeAction("Scanning for Easy Apply jobs");
 
             for (String selector : jobSelectors) {
                 try {
+                    visualizer.highlightElements(selector.trim());
                     Locator elements = page.locator(selector.trim());
                     int count = elements.count();
 
@@ -200,6 +262,7 @@ public class ReedCrawler extends AbstractJobCrawler {
                         if (crawlerConfig.isDebugMode()) {
                             System.out.println("Found " + count + " job elements with selector: " + selector);
                         }
+                        visualizer.visualizeAction("Found " + count + " job cards");
 
                         // Check each job card for Easy Apply button
                         for (int i = jobsChecked; i < count; i++) {
@@ -208,25 +271,32 @@ public class ReedCrawler extends AbstractJobCrawler {
                                 jobsChecked = i + 1;
 
                                 if (element.isVisible()) {
+                                    visualizer.visualizeAction("Checking job " + (i + 1) + " for Easy Apply");
+                                    visualizer.highlightElements(selector + ":nth-child(" + (i + 1) + ")");
+
                                     if (hasEasyApplyButton(element)) {
                                         easyApplyJobsFound++;
                                         JobInfo job = extractJobInfo(element, i);
 
-                                        System.out.println("✅ Found Easy Apply job: " + job.getTitle() + " (" + easyApplyJobsFound + " Easy Apply jobs found so far)");
+                                        System.out.println("✓ Found Easy Apply job: " + job.getTitle()
+                                                + " (" + easyApplyJobsFound + " Easy Apply jobs found so far)");
+                                        visualizer.visualizeAction("Found Easy Apply job: " + job.getTitle());
 
                                         element.scrollIntoViewIfNeeded();
-                                        // Reduced wait time
-                                        page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
+                                        // Adjusted wait time
+                                        page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
                                         element.click();
-                                        // Reduced wait time
-                                        page.waitForTimeout(Math.max(500, crawlerConfig.getJobCardLoadDelay() / 2));
+                                        visualizer.visualizeAction("Opening job details");
+                                        // Adjusted wait time
+                                        page.waitForTimeout(adjustedDelay(crawlerConfig.getJobCardLoadDelay()));
 
                                         return job;
                                     } else {
                                         JobInfo job = extractJobInfo(element, i);
                                         if (crawlerConfig.isDebugMode()) {
-                                            System.out.println("❌ Skipping job (no Easy Apply): " + job.getTitle());
+                                            System.out.println("✗ Skipping job (no Easy Apply): " + job.getTitle());
                                         }
+                                        visualizer.visualizeAction("Not Easy Apply, skipping");
                                     }
                                 }
                             } catch (Exception e) {
@@ -240,6 +310,7 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
 
             // Check if we need to load more jobs or go to next page
+            visualizer.visualizeAction("Checking for more jobs or next page");
             if (tryLoadMoreJobsOrNextPage()) {
                 // Reset jobs checked counter for the new page/batch
                 jobsChecked = 0;
@@ -247,9 +318,11 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
 
             System.out.println("No more Easy Apply jobs found after checking " + jobsChecked + " jobs");
+            visualizer.visualizeAction("No more Easy Apply jobs found");
 
         } catch (Exception e) {
             e.printStackTrace();
+            visualizer.visualizeAction("Error finding jobs: " + e.getMessage());
         }
 
         return null;
@@ -261,10 +334,12 @@ public class ReedCrawler extends AbstractJobCrawler {
             Locator loadMoreButton = page.locator("button:has-text('Load More'), button:has-text('Show More'), a:has-text('Load More')").first();
             if (loadMoreButton != null && loadMoreButton.isVisible()) {
                 System.out.println("Clicking 'Load More' button to get more jobs...");
+                visualizer.visualizeAction("Loading more jobs");
+                visualizer.highlightElements("button:has-text('Load More'), button:has-text('Show More'), a:has-text('Load More')");
                 loadMoreButton.scrollIntoViewIfNeeded();
                 loadMoreButton.click();
                 page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                page.waitForTimeout(1000);
+                page.waitForTimeout(adjustedDelay(1000));
                 return true;
             }
 
@@ -272,16 +347,19 @@ public class ReedCrawler extends AbstractJobCrawler {
             Locator nextPageButton = page.locator("a:has-text('Next'), a[aria-label='Next page'], button:has-text('Next')").first();
             if (nextPageButton != null && nextPageButton.isVisible()) {
                 System.out.println("Navigating to next page of results...");
+                visualizer.visualizeAction("Going to next page");
+                visualizer.highlightElements("a:has-text('Next'), a[aria-label='Next page'], button:has-text('Next')");
                 nextPageButton.scrollIntoViewIfNeeded();
                 nextPageButton.click();
                 page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-                page.waitForTimeout(1000);
+                page.waitForTimeout(adjustedDelay(1000));
                 return true;
             }
 
             return false;
         } catch (Exception e) {
             System.out.println("Error trying to load more jobs: " + e.getMessage());
+            visualizer.visualizeAction("Error loading more jobs");
             return false;
         }
     }
@@ -297,6 +375,8 @@ public class ReedCrawler extends AbstractJobCrawler {
                         if (crawlerConfig.isDebugMode()) {
                             System.out.println("   Found Easy Apply button with selector: " + selector);
                         }
+                        visualizer.highlightElements(selector);
+                        visualizer.visualizeAction("Easy Apply button found");
                         return true;
                     }
                 } catch (Exception e) {
@@ -315,6 +395,7 @@ public class ReedCrawler extends AbstractJobCrawler {
                             if (crawlerConfig.isDebugMode()) {
                                 System.out.println("   Found Easy Apply keyword: " + keyword);
                             }
+                            visualizer.visualizeAction("Easy Apply keyword found: " + keyword);
                             return true;
                         }
                     }
@@ -357,26 +438,29 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             if (!clickApplyNowButton()) {
                 System.out.println("Could not find Apply Now button");
+                visualizer.visualizeAction("Apply Now button not found");
                 return false;
             }
 
-            // Reduced wait time
-            page.waitForTimeout(Math.max(500, crawlerConfig.getApplicationStepDelay() / 2));
+            // Adjusted wait time
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getApplicationStepDelay()));
 
             clickUpdateButton();
-            // Reduced wait time
-            page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
+            // Adjusted wait time
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
 
             if (!clickChooseOwnCVButton()) {
                 System.out.println("Could not find Choose your own CV file button");
+                visualizer.visualizeAction("CV upload button not found");
                 return false;
             }
 
-            // Reduced wait time
-            page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
+            // Adjusted wait time
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
 
             if (!uploadCVFile(cvPath)) {
                 System.out.println("Failed to upload CV file");
+                visualizer.visualizeAction("CV upload failed");
                 return false;
             }
 
@@ -384,16 +468,19 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             if (!submitApplication()) {
                 System.out.println("Failed to submit application");
+                visualizer.visualizeAction("Submit application failed");
                 return false;
             }
 
             handleConfirmationDialog();
 
             System.out.println("Job application completed successfully!");
+            visualizer.visualizeAction("Application completed successfully!");
             return true;
 
         } catch (Exception e) {
             System.out.println("Error during job application: " + e.getMessage());
+            visualizer.visualizeAction("Application error: " + e.getMessage());
             e.printStackTrace();
             return false;
         }
@@ -404,9 +491,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
         for (String selector : applySelectors) {
             try {
+                visualizer.highlightElements(selector);
                 Locator applyButton = page.locator(selector.trim()).first();
                 if (applyButton.isVisible()) {
                     System.out.println("Found Apply Now button with selector: " + selector);
+                    visualizer.visualizeAction("Clicking Apply Now");
                     applyButton.scrollIntoViewIfNeeded();
                     applyButton.click();
                     return true;
@@ -416,6 +505,7 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
         }
 
+        visualizer.visualizeAction("Apply Now button not found");
         return false;
     }
 
@@ -424,9 +514,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
         for (String selector : updateSelectors) {
             try {
+                visualizer.highlightElements(selector);
                 Locator updateButton = page.locator(selector.trim()).first();
                 if (updateButton.isVisible()) {
                     System.out.println("Found Update button, clicking...");
+                    visualizer.visualizeAction("Clicking Update button");
                     updateButton.click();
                     return;
                 }
@@ -438,6 +530,7 @@ public class ReedCrawler extends AbstractJobCrawler {
         if (crawlerConfig.isDebugMode()) {
             System.out.println("No Update button found (this may be normal)");
         }
+        visualizer.visualizeAction("No Update button found (this may be normal)");
     }
 
     private boolean clickChooseOwnCVButton() {
@@ -445,9 +538,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
         for (String selector : cvSelectors) {
             try {
+                visualizer.highlightElements(selector);
                 Locator cvButton = page.locator(selector.trim()).first();
                 if (cvButton.isVisible()) {
                     System.out.println("Found Choose CV button with selector: " + selector);
+                    visualizer.visualizeAction("Clicking Choose CV button");
                     cvButton.scrollIntoViewIfNeeded();
                     cvButton.click();
                     return true;
@@ -457,6 +552,7 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
         }
 
+        visualizer.visualizeAction("Choose CV button not found");
         return false;
     }
 
@@ -466,9 +562,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             for (String selector : fileInputSelectors) {
                 try {
+                    visualizer.highlightElements(selector);
                     Locator fileInput = page.locator(selector.trim()).first();
                     if (fileInput.count() > 0) {
                         System.out.println("Found file input, uploading CV: " + cvPath.toAbsolutePath());
+                        visualizer.visualizeAction("Uploading CV file");
                         fileInput.setInputFiles(cvPath);
                         return true;
                     }
@@ -478,10 +576,12 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
 
             System.out.println("No file input found for CV upload");
+            visualizer.visualizeAction("File input not found");
             return false;
 
         } catch (Exception e) {
             System.out.println("Error uploading CV file: " + e.getMessage());
+            visualizer.visualizeAction("Upload error: " + e.getMessage());
             return false;
         }
     }
@@ -489,17 +589,20 @@ public class ReedCrawler extends AbstractJobCrawler {
     private void waitForCVProcessing() {
         try {
             System.out.println("Waiting for CV processing to complete...");
+            visualizer.visualizeAction("Waiting for CV processing");
 
             String[] processingSelectors = crawlerConfig.getProcessingSelectors().split(",");
-            // Reduced initial wait time
-            page.waitForTimeout(Math.max(300, crawlerConfig.getProcessingStartDelay() / 2));
+            // Adjusted initial wait time
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingStartDelay()));
 
             for (String selector : processingSelectors) {
                 try {
+                    visualizer.highlightElements(selector);
                     Locator processingElement = page.locator(selector.trim()).first();
                     if (processingElement.isVisible()) {
                         System.out.println("CV processing detected, waiting for completion...");
-                        // Keep timeout but add polling option for faster response
+                        visualizer.visualizeAction("CV processing in progress...");
+                        // Use polling rate from config
                         processingElement.waitFor(new Locator.WaitForOptions()
                                 .setState(WaitForSelectorState.HIDDEN)
                                 .setTimeout(crawlerConfig.getProcessingTimeout()));
@@ -510,14 +613,16 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Reduced wait time after processing
-            page.waitForTimeout(Math.max(500, crawlerConfig.getProcessingCompleteDelay() / 2));
+            // Adjusted wait time after processing
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingCompleteDelay()));
             System.out.println("CV processing completed");
+            visualizer.visualizeAction("CV processing completed");
 
         } catch (Exception e) {
             System.out.println("Error waiting for CV processing: " + e.getMessage());
-            // Reduced fallback delay
-            page.waitForTimeout(Math.max(1000, crawlerConfig.getProcessingFallbackDelay() / 2));
+            visualizer.visualizeAction("Processing error: " + e.getMessage());
+            // Adjusted fallback delay
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingFallbackDelay()));
         }
     }
 
@@ -526,9 +631,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
         for (String selector : submitSelectors) {
             try {
+                visualizer.highlightElements(selector);
                 Locator submitButton = page.locator(selector.trim()).first();
                 if (submitButton.isVisible()) {
                     System.out.println("Found Submit button with selector: " + selector);
+                    visualizer.visualizeAction("Submitting application");
                     submitButton.scrollIntoViewIfNeeded();
                     submitButton.click();
                     return true;
@@ -539,24 +646,28 @@ public class ReedCrawler extends AbstractJobCrawler {
         }
 
         System.out.println("No Submit Application button found");
+        visualizer.visualizeAction("Submit button not found");
         return false;
     }
 
     private void handleConfirmationDialog() {
         try {
-            // Reduced confirmation dialog wait time
-            page.waitForTimeout(Math.max(500, crawlerConfig.getConfirmationDialogDelay() / 2));
+            // Adjusted confirmation dialog wait time
+            page.waitForTimeout(adjustedDelay(crawlerConfig.getConfirmationDialogDelay()));
+            visualizer.visualizeAction("Checking for confirmation dialog");
 
             String[] okSelectors = crawlerConfig.getConfirmationSelectors().split(",");
 
             for (String selector : okSelectors) {
                 try {
+                    visualizer.highlightElements(selector);
                     Locator okButton = page.locator(selector.trim()).first();
                     if (okButton.isVisible()) {
                         System.out.println("Found confirmation dialog, clicking OK...");
+                        visualizer.visualizeAction("Clicking OK on confirmation dialog");
                         okButton.click();
-                        // Reduced interaction delay
-                        page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
+                        // Adjusted interaction delay
+                        page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
                         return;
                     }
                 } catch (Exception e) {
@@ -567,9 +678,11 @@ public class ReedCrawler extends AbstractJobCrawler {
             if (crawlerConfig.isDebugMode()) {
                 System.out.println("No confirmation dialog found");
             }
+            visualizer.visualizeAction("No confirmation dialog found");
 
         } catch (Exception e) {
             System.out.println("Error handling confirmation dialog: " + e.getMessage());
+            visualizer.visualizeAction("Confirmation dialog error");
         }
     }
 
@@ -582,28 +695,55 @@ public class ReedCrawler extends AbstractJobCrawler {
             String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
             boolean foundDescription = false;
 
-            for (String cardSelector : cardSelectors) {
-                try {
-                    Locator jobCard = page.locator(cardSelector.trim()).first();
-                    if (jobCard.isVisible()) {
-                        String cardContent = jobCard.textContent();
+            // First try the specific class you mentioned
+            try {
+                String specificSelector = ".job-details-drawer-modal_jobSection__42ckh.job-details-drawer-modal_jobDescription__r4Xn1";
+                visualizer.highlightElements(specificSelector);
+                Locator specificJobDesc = page.locator(specificSelector).first();
 
-                        if (cardContent != null && cardContent.length() > 200) {
-                            System.out.println("FOUND JOB CARD WITH SELECTOR: " + cardSelector);
-                            System.out.println("CARD CONTENT LENGTH: " + cardContent.length() + " characters");
+                if (specificJobDesc != null && specificJobDesc.isVisible()) {
+                    String content = specificJobDesc.textContent();
+                    System.out.println("FOUND SPECIFIC JOB DESCRIPTION SELECTOR: " + specificSelector);
+                    System.out.println("CONTENT LENGTH: " + content.length() + " characters");
 
-                            if (cardContent.length() > 1500) {
-                                System.out.println(cardContent.substring(0, 1500) + "...[TRUNCATED]");
-                            } else {
-                                System.out.println(cardContent);
-                            }
-
-                            foundDescription = true;
-                            break;
-                        }
+                    if (content.length() > 1500) {
+                        System.out.println(content.substring(0, 1500) + "...[TRUNCATED]");
+                    } else {
+                        System.out.println(content);
                     }
-                } catch (Exception e) {
-                    continue;
+
+                    foundDescription = true;
+                }
+            } catch (Exception e) {
+                // Continue to other selectors
+            }
+
+            // If specific selector didn't work, try the configured ones
+            if (!foundDescription) {
+                for (String cardSelector : cardSelectors) {
+                    try {
+                        visualizer.highlightElements(cardSelector);
+                        Locator jobCard = page.locator(cardSelector.trim()).first();
+                        if (jobCard != null && jobCard.isVisible()) {
+                            String cardContent = jobCard.textContent();
+
+                            if (cardContent != null && cardContent.length() > 200) {
+                                System.out.println("FOUND JOB CARD WITH SELECTOR: " + cardSelector);
+                                System.out.println("CARD CONTENT LENGTH: " + cardContent.length() + " characters");
+
+                                if (cardContent.length() > 1500) {
+                                    System.out.println(cardContent.substring(0, 1500) + "...[TRUNCATED]");
+                                } else {
+                                    System.out.println(cardContent);
+                                }
+
+                                foundDescription = true;
+                                break;
+                            }
+                        }
+                    } catch (Exception e) {
+                        continue;
+                    }
                 }
             }
 
@@ -622,18 +762,58 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private String extractJobDescriptionFromCard() {
         try {
-            String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
             StringBuilder fullDescription = new StringBuilder();
+            visualizer.visualizeAction("Extracting job description");
 
+            // First try the specific Reed class you mentioned
+            try {
+                // Try with the specific class names mentioned
+                String specificSelector = ".job-details-drawer-modal_jobSection__42ckh.job-details-drawer-modal_jobDescription__r4Xn1";
+                visualizer.highlightElements(specificSelector);
+                Locator specificJobDesc = page.locator(specificSelector).first();
+
+                if (specificJobDesc != null && specificJobDesc.isVisible()) {
+                    fullDescription.append(specificJobDesc.textContent()).append("\n\n");
+                    System.out.println("Found job description using specific Reed selector.");
+                    visualizer.visualizeAction("Found job description with specific selector");
+                    return fullDescription.toString();
+                }
+
+                // Try similar classes that might match
+                String partialSelector1 = "[class*='jobSection'][class*='jobDescription']";
+                String partialSelector2 = "[class*='job-details'][class*='description']";
+
+                for (String selector : new String[]{partialSelector1, partialSelector2}) {
+                    visualizer.highlightElements(selector);
+                    Locator element = page.locator(selector).first();
+                    if (element != null && element.isVisible()) {
+                        fullDescription.append(element.textContent()).append("\n\n");
+                        System.out.println("Found job description using partial selector: " + selector);
+                        visualizer.visualizeAction("Found job description with partial selector");
+                        return fullDescription.toString();
+                    }
+                }
+            } catch (Exception e) {
+                // Continue to other selectors
+                System.out.println("Could not find specific Reed job description element, trying alternatives");
+            }
+
+            // Then try the configured selectors
+            String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
             for (String cardSelector : cardSelectors) {
                 try {
+                    visualizer.highlightElements(cardSelector.trim());
                     Locator jobCard = page.locator(cardSelector.trim()).first();
-                    if (jobCard.isVisible()) {
+                    if (jobCard != null && jobCard.isVisible()) {
                         // Get main text content
                         fullDescription.append(jobCard.textContent()).append("\n\n");
 
                         // Extract all article text content
                         Locator allArticleElements = jobCard.locator("article, section, div[class*='description'], div[class*='detail'], div[class*='content'], p");
+                        visualizer.highlightElements(cardSelector + " article, " + cardSelector + " section, "
+                                + cardSelector + " div[class*='description'], " + cardSelector + " div[class*='detail'], "
+                                + cardSelector + " div[class*='content'], " + cardSelector + " p");
+
                         int elementsCount = allArticleElements.count();
 
                         if (elementsCount > 0) {
@@ -658,6 +838,7 @@ public class ReedCrawler extends AbstractJobCrawler {
                             }
                         }
 
+                        visualizer.visualizeAction("Description extracted successfully");
                         return fullDescription.toString();
                     }
                 } catch (Exception e) {
@@ -665,7 +846,39 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Fallback to full page content
+            // Fallback to common job description containers
+            String[] commonJobDescSelectors = {
+                "[class*='job-description']",
+                "[class*='jobDescription']",
+                "[class*='job-details']",
+                "[class*='jobDetails']",
+                "[class*='description-container']",
+                "[id*='job-description']",
+                "[id*='jobDescription']",
+                "[data-testid*='description']",
+                "[data-qa*='description']"
+            };
+
+            for (String selector : commonJobDescSelectors) {
+                try {
+                    visualizer.highlightElements(selector);
+                    Locator element = page.locator(selector).first();
+                    if (element != null && element.isVisible()) {
+                        String text = element.textContent();
+                        if (text != null && text.length() > 100) {
+                            fullDescription.append(text).append("\n\n");
+                            System.out.println("Found job description using common selector: " + selector);
+                            visualizer.visualizeAction("Found description with common selector");
+                            return fullDescription.toString();
+                        }
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
+            }
+
+            // Ultimate fallback to full page content
+            visualizer.visualizeAction("Using fallback method for description");
             StringBuilder pageContent = new StringBuilder();
 
             // Get main body content
@@ -683,6 +896,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
             for (String container : descContainers) {
                 try {
+                    visualizer.highlightElements(container);
                     Locator elements = page.locator(container);
                     int count = elements.count();
 
@@ -697,9 +911,17 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            return pageContent.toString();
+            if (pageContent.length() > 0) {
+                return pageContent.toString();
+            }
+
+            // If all else fails, just return body text
+            visualizer.visualizeAction("Using body text as fallback");
+            return page.textContent("body");
 
         } catch (Exception e) {
+            visualizer.visualizeAction("Error extracting description");
+            System.out.println("Error extracting job description: " + e.getMessage());
             return page.textContent("body"); // Ultimate fallback
         }
     }
