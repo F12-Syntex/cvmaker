@@ -2,101 +2,31 @@ package com.cvmaker.crawler;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.UUID;
 
-import com.cvmaker.CVGenerator;
-import com.cvmaker.configuration.ConfigManager;
 import com.cvmaker.configuration.CrawlerConfig;
-import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Locator;
-import com.microsoft.playwright.Page;
-import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.options.LoadState;
+import com.microsoft.playwright.options.WaitForSelectorState;
 
-public class ReedCrawler {
-
-    private Playwright playwright;
-    private BrowserContext context;
-    private Page page;
-
-    // Configuration
-    private ConfigManager config;
-    private CrawlerConfig crawlerConfig;
-
-    // Application tracking
-    private int applicationsSubmitted = 0;
-    private int jobsChecked = 0;
-    private int easyApplyJobsFound = 0;
+/**
+ * Reed job site crawler implementation.
+ */
+public class ReedCrawler extends AbstractJobCrawler {
 
     public ReedCrawler() throws Exception {
-        this(new CrawlerConfig());
+        super();
     }
 
     public ReedCrawler(CrawlerConfig crawlerConfig) throws Exception {
-        this.crawlerConfig = crawlerConfig;
-        this.config = new ConfigManager(crawlerConfig.getCvConfigFile());
-        initializeDirectories();
+        super(crawlerConfig);
     }
 
-    private void initializeDirectories() throws Exception {
-        Files.createDirectories(Paths.get(config.getOutputDirectory()));
+    @Override
+    public String getCrawlerName() {
+        return "Reed";
     }
 
-    public void setupBrowser() {
-        playwright = Playwright.create();
-
-        try {
-            Path userDataDir = Paths.get(crawlerConfig.getBrowserDataDir());
-            this.context = playwright.chromium().launchPersistentContext(
-                    userDataDir,
-                    new BrowserType.LaunchPersistentContextOptions()
-                            .setHeadless(crawlerConfig.isHeadless())
-                            .setSlowMo(crawlerConfig.getSlowMo())
-                            .setViewportSize(crawlerConfig.getViewportWidth(), crawlerConfig.getViewportHeight())
-                            .setUserAgent(crawlerConfig.getUserAgent())
-                            .setJavaScriptEnabled(true)
-                            .setArgs(Arrays.asList(crawlerConfig.getBrowserArgs().split(",")))
-                            .setExtraHTTPHeaders(Map.of(
-                                    "Accept", crawlerConfig.getAcceptHeader(),
-                                    "Accept-Language", crawlerConfig.getAcceptLanguageHeader()
-                            ))
-            );
-
-            context.addInitScript("() => {"
-                    + "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-                    + "delete navigator.__proto__.webdriver;"
-                    + "window.chrome = { runtime: {} };"
-                    + "}");
-
-            this.page = context.newPage();
-            page.setDefaultTimeout(crawlerConfig.getPageTimeout());
-            page.setDefaultNavigationTimeout(crawlerConfig.getNavigationTimeout());
-
-            System.out.println("Browser setup completed");
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void openForLogin() {
-        try {
-            page.navigate(crawlerConfig.getBaseUrl());
-            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-            page.waitForTimeout(crawlerConfig.getPageLoadDelay());
-
-            System.out.println("Login to " + crawlerConfig.getBaseUrl() + " if needed, then press ENTER...");
-            System.in.read();
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
+    @Override
     public void processJobsAndApply() {
         try {
             // Navigate to job search
@@ -104,7 +34,22 @@ public class ReedCrawler {
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
 
             // Perform search
-            performJobSearch();
+            boolean searchSuccess = performJobSearch();
+
+            // Check if search failed due to login requirements
+            if (!searchSuccess) {
+                if (handleLoginIfRequired()) {
+                    // Retry search after login
+                    searchSuccess = performJobSearch();
+                    if (!searchSuccess) {
+                        System.out.println("Search failed even after login attempt. Exiting.");
+                        return;
+                    }
+                } else {
+                    System.out.println("Login required but could not complete login. Exiting.");
+                    return;
+                }
+            }
 
             System.out.println("Starting job search - looking for Easy Apply jobs only...");
             System.out.println("Maximum applications to submit: " + crawlerConfig.getMaxApplications());
@@ -118,31 +63,34 @@ public class ReedCrawler {
                     break;
                 }
 
-                // Wait for job card to update
-                page.waitForTimeout(crawlerConfig.getJobCardLoadDelay());
+                // Wait for job card to update - reduced wait time
+                page.waitForTimeout(Math.max(500, crawlerConfig.getJobCardLoadDelay() / 2));
 
                 // Extract and print job description
                 if (crawlerConfig.isDebugMode()) {
                     printJobDescriptionFromCard();
                 }
 
+                // Extract job description
+                String jobDescription = extractJobDescriptionFromCard();
+
                 // Generate CV for this job
-                Path generatedCvPath = generateCVForJob(job);
+                Path generatedCvPath = generateCVForJob(job, jobDescription);
 
                 if (generatedCvPath != null && Files.exists(generatedCvPath)) {
                     // Apply for the job
-                    boolean applicationSuccess = applyForJobStandardProcess(generatedCvPath);
+                    boolean applicationSuccess = applyForJob(generatedCvPath);
 
                     if (applicationSuccess) {
                         applicationsSubmitted++;
                         System.out.println("Successfully applied to job " + applicationsSubmitted + "/" + crawlerConfig.getMaxApplications());
                     }
                 } else {
-                    System.out.println("Failed to generate CV for job: " + job.title);
+                    System.out.println("Failed to generate CV for job: " + job.getTitle());
                 }
 
-                // Wait between applications
-                page.waitForTimeout(crawlerConfig.getApplicationDelay());
+                // Reduced wait time between applications
+                page.waitForTimeout(Math.max(1000, crawlerConfig.getApplicationDelay() / 2));
             }
 
             printSessionSummary();
@@ -152,18 +100,89 @@ public class ReedCrawler {
         }
     }
 
-    private void performJobSearch() {
+    private boolean performJobSearch() {
         try {
+            // First wait a short time for page to fully load
+            page.waitForTimeout(500);
+
             Locator searchInput = page.locator(crawlerConfig.getSearchInputSelector()).first();
+
+            // Check if search input exists and is visible
+            if (searchInput == null || !searchInput.isVisible()) {
+                System.out.println("Search input not found or not visible");
+                return false;
+            }
+
             searchInput.click();
             searchInput.fill(crawlerConfig.getSearchKeywords());
             searchInput.press("Enter");
 
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-            page.waitForTimeout(crawlerConfig.getSearchResultsDelay());
+
+            // Reduced wait time for search results
+            page.waitForTimeout(Math.max(1000, crawlerConfig.getSearchResultsDelay() / 2));
+
+            // Verify search was successful by checking for job results
+            String[] jobSelectors = crawlerConfig.getJobCardSelectors().split(",");
+            boolean foundResults = false;
+
+            for (String selector : jobSelectors) {
+                try {
+                    Locator elements = page.locator(selector.trim());
+                    if (elements.count() > 0) {
+                        foundResults = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
+            }
+
+            return foundResults;
 
         } catch (Exception e) {
             System.out.println("Error performing job search: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean handleLoginIfRequired() {
+        try {
+            System.out.println("Login may be required. Checking for login elements...");
+
+            // Look for login form elements (username/email input, password input, login button)
+            Locator emailInput = page.locator("input[type='email'], input[name='email'], input[id*='email'], input[id*='username']").first();
+            Locator passwordInput = page.locator("input[type='password']").first();
+            Locator loginButton = page.locator("button[type='submit'], input[type='submit'], button:has-text('Sign in'), button:has-text('Log in')").first();
+
+            if (emailInput != null && emailInput.isVisible()
+                    && passwordInput != null && passwordInput.isVisible()
+                    && loginButton != null && loginButton.isVisible()) {
+
+                System.out.println("Login form detected. Please provide login credentials to continue.");
+                System.out.println("This crawler requires you to manually log in.");
+
+                // Wait for user to complete login manually
+                System.out.println("Waiting for 30 seconds for manual login...");
+                page.waitForTimeout(30000);
+
+                // Check if login was successful
+                boolean loginSuccess = !page.url().contains("login") && !page.url().contains("signin");
+                if (loginSuccess) {
+                    System.out.println("Login appears successful. Continuing with job search.");
+                    return true;
+                } else {
+                    System.out.println("Login may have failed. Attempting to continue anyway.");
+                    return false;
+                }
+            } else {
+                System.out.println("No login form detected, but search failed. Site may be experiencing issues.");
+                return false;
+            }
+
+        } catch (Exception e) {
+            System.out.println("Error handling login: " + e.getMessage());
+            return false;
         }
     }
 
@@ -193,18 +212,20 @@ public class ReedCrawler {
                                         easyApplyJobsFound++;
                                         JobInfo job = extractJobInfo(element, i);
 
-                                        System.out.println("✅ Found Easy Apply job: " + job.title + " (" + easyApplyJobsFound + " Easy Apply jobs found so far)");
+                                        System.out.println("✅ Found Easy Apply job: " + job.getTitle() + " (" + easyApplyJobsFound + " Easy Apply jobs found so far)");
 
                                         element.scrollIntoViewIfNeeded();
-                                        page.waitForTimeout(crawlerConfig.getElementInteractionDelay());
+                                        // Reduced wait time
+                                        page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
                                         element.click();
-                                        page.waitForTimeout(crawlerConfig.getJobCardLoadDelay());
+                                        // Reduced wait time
+                                        page.waitForTimeout(Math.max(500, crawlerConfig.getJobCardLoadDelay() / 2));
 
                                         return job;
                                     } else {
                                         JobInfo job = extractJobInfo(element, i);
                                         if (crawlerConfig.isDebugMode()) {
-                                            System.out.println("❌ Skipping job (no Easy Apply): " + job.title);
+                                            System.out.println("❌ Skipping job (no Easy Apply): " + job.getTitle());
                                         }
                                     }
                                 }
@@ -218,6 +239,13 @@ public class ReedCrawler {
                 }
             }
 
+            // Check if we need to load more jobs or go to next page
+            if (tryLoadMoreJobsOrNextPage()) {
+                // Reset jobs checked counter for the new page/batch
+                jobsChecked = 0;
+                return findAndClickNextEasyApplyJob();
+            }
+
             System.out.println("No more Easy Apply jobs found after checking " + jobsChecked + " jobs");
 
         } catch (Exception e) {
@@ -225,6 +253,37 @@ public class ReedCrawler {
         }
 
         return null;
+    }
+
+    private boolean tryLoadMoreJobsOrNextPage() {
+        try {
+            // Try to find and click "Load More" button
+            Locator loadMoreButton = page.locator("button:has-text('Load More'), button:has-text('Show More'), a:has-text('Load More')").first();
+            if (loadMoreButton != null && loadMoreButton.isVisible()) {
+                System.out.println("Clicking 'Load More' button to get more jobs...");
+                loadMoreButton.scrollIntoViewIfNeeded();
+                loadMoreButton.click();
+                page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                page.waitForTimeout(1000);
+                return true;
+            }
+
+            // Try to find and click "Next Page" button
+            Locator nextPageButton = page.locator("a:has-text('Next'), a[aria-label='Next page'], button:has-text('Next')").first();
+            if (nextPageButton != null && nextPageButton.isVisible()) {
+                System.out.println("Navigating to next page of results...");
+                nextPageButton.scrollIntoViewIfNeeded();
+                nextPageButton.click();
+                page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                page.waitForTimeout(1000);
+                return true;
+            }
+
+            return false;
+        } catch (Exception e) {
+            System.out.println("Error trying to load more jobs: " + e.getMessage());
+            return false;
+        }
     }
 
     private boolean hasEasyApplyButton(Locator jobCard) {
@@ -279,20 +338,20 @@ public class ReedCrawler {
             String text = element.textContent();
             if (text != null && !text.trim().isEmpty()) {
                 String[] lines = text.split("\n");
-                job.title = lines[0].trim();
+                job.setTitle(lines[0].trim());
                 if (lines.length > 1) {
-                    job.company = lines[1].trim();
+                    job.setCompany(lines[1].trim());
                 }
             }
         } catch (Exception e) {
-            job.title = "Job " + index;
-            job.company = "Company";
+            job.setTitle("Job " + index);
+            job.setCompany("Company");
         }
 
         return job;
     }
 
-    private boolean applyForJobStandardProcess(Path cvPath) {
+    private boolean applyForJob(Path cvPath) {
         try {
             System.out.println("Starting job application process...");
 
@@ -301,17 +360,20 @@ public class ReedCrawler {
                 return false;
             }
 
-            page.waitForTimeout(crawlerConfig.getApplicationStepDelay());
+            // Reduced wait time
+            page.waitForTimeout(Math.max(500, crawlerConfig.getApplicationStepDelay() / 2));
 
             clickUpdateButton();
-            page.waitForTimeout(crawlerConfig.getElementInteractionDelay());
+            // Reduced wait time
+            page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
 
             if (!clickChooseOwnCVButton()) {
                 System.out.println("Could not find Choose your own CV file button");
                 return false;
             }
 
-            page.waitForTimeout(crawlerConfig.getElementInteractionDelay());
+            // Reduced wait time
+            page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
 
             if (!uploadCVFile(cvPath)) {
                 System.out.println("Failed to upload CV file");
@@ -429,15 +491,17 @@ public class ReedCrawler {
             System.out.println("Waiting for CV processing to complete...");
 
             String[] processingSelectors = crawlerConfig.getProcessingSelectors().split(",");
-            page.waitForTimeout(crawlerConfig.getProcessingStartDelay());
+            // Reduced initial wait time
+            page.waitForTimeout(Math.max(300, crawlerConfig.getProcessingStartDelay() / 2));
 
             for (String selector : processingSelectors) {
                 try {
                     Locator processingElement = page.locator(selector.trim()).first();
                     if (processingElement.isVisible()) {
                         System.out.println("CV processing detected, waiting for completion...");
+                        // Keep timeout but add polling option for faster response
                         processingElement.waitFor(new Locator.WaitForOptions()
-                                .setState(com.microsoft.playwright.options.WaitForSelectorState.HIDDEN)
+                                .setState(WaitForSelectorState.HIDDEN)
                                 .setTimeout(crawlerConfig.getProcessingTimeout()));
                         break;
                     }
@@ -446,12 +510,14 @@ public class ReedCrawler {
                 }
             }
 
-            page.waitForTimeout(crawlerConfig.getProcessingCompleteDelay());
+            // Reduced wait time after processing
+            page.waitForTimeout(Math.max(500, crawlerConfig.getProcessingCompleteDelay() / 2));
             System.out.println("CV processing completed");
 
         } catch (Exception e) {
             System.out.println("Error waiting for CV processing: " + e.getMessage());
-            page.waitForTimeout(crawlerConfig.getProcessingFallbackDelay());
+            // Reduced fallback delay
+            page.waitForTimeout(Math.max(1000, crawlerConfig.getProcessingFallbackDelay() / 2));
         }
     }
 
@@ -478,7 +544,8 @@ public class ReedCrawler {
 
     private void handleConfirmationDialog() {
         try {
-            page.waitForTimeout(crawlerConfig.getConfirmationDialogDelay());
+            // Reduced confirmation dialog wait time
+            page.waitForTimeout(Math.max(500, crawlerConfig.getConfirmationDialogDelay() / 2));
 
             String[] okSelectors = crawlerConfig.getConfirmationSelectors().split(",");
 
@@ -488,7 +555,8 @@ public class ReedCrawler {
                     if (okButton.isVisible()) {
                         System.out.println("Found confirmation dialog, clicking OK...");
                         okButton.click();
-                        page.waitForTimeout(crawlerConfig.getElementInteractionDelay());
+                        // Reduced interaction delay
+                        page.waitForTimeout(Math.max(200, crawlerConfig.getElementInteractionDelay() / 2));
                         return;
                     }
                 } catch (Exception e) {
@@ -552,126 +620,87 @@ public class ReedCrawler {
         }
     }
 
-    private Path generateCVForJob(JobInfo job) {
-        try {
-            System.out.println("Generating CV for: " + job.title + " at " + job.company);
-
-            String jobContent = extractJobDescriptionFromCard();
-            if (jobContent == null || jobContent.trim().isEmpty()) {
-                System.out.println("No job content found, skipping CV generation");
-                return null;
-            }
-
-            // Create unique job folder
-            String uuid = UUID.randomUUID().toString();
-            String jobFolder = config.getOutputDirectory() + "/" + uuid;
-            Path jobFolderPath = Paths.get(jobFolder);
-            Files.createDirectories(jobFolderPath);
-
-            // Create config for this specific job
-            config.setJobDescriptionContent(jobContent);
-
-            // Generate CV using the simplified CVGenerator
-            CVGenerator generator = new CVGenerator(config);
-
-            // Temporarily update config output directory
-            String originalOutputDir = config.getOutputDirectory();
-            config.setOutputDirectory(jobFolderPath.toString());
-
-            generator.generate();
-
-            // Restore original output directory
-            config.setOutputDirectory(originalOutputDir);
-
-            generator.shutdown();
-
-            Path cvPath = jobFolderPath.resolve(config.getOutputPdfName());
-            if (Files.exists(cvPath)) {
-                System.out.println("CV generated successfully: " + cvPath.toAbsolutePath());
-                return cvPath;
-            } else {
-                System.out.println("CV generation failed - file not found");
-                return null;
-            }
-
-        } catch (Exception e) {
-            System.out.println("Error generating CV: " + e.getMessage());
-            e.printStackTrace();
-            return null;
-        }
-    }
-
     private String extractJobDescriptionFromCard() {
         try {
             String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
+            StringBuilder fullDescription = new StringBuilder();
 
             for (String cardSelector : cardSelectors) {
                 try {
                     Locator jobCard = page.locator(cardSelector.trim()).first();
                     if (jobCard.isVisible()) {
-                        return jobCard.textContent();
+                        // Get main text content
+                        fullDescription.append(jobCard.textContent()).append("\n\n");
+
+                        // Extract all article text content
+                        Locator allArticleElements = jobCard.locator("article, section, div[class*='description'], div[class*='detail'], div[class*='content'], p");
+                        int elementsCount = allArticleElements.count();
+
+                        if (elementsCount > 0) {
+                            for (int i = 0; i < elementsCount; i++) {
+                                String elementText = allArticleElements.nth(i).textContent();
+                                if (elementText != null && !elementText.trim().isEmpty()) {
+                                    fullDescription.append(elementText).append("\n\n");
+                                }
+                            }
+                        }
+
+                        // Also try to extract all paragraph text
+                        Locator paragraphs = jobCard.locator("p, li, h1, h2, h3, h4, h5, h6");
+                        int pCount = paragraphs.count();
+
+                        if (pCount > 0) {
+                            for (int i = 0; i < pCount; i++) {
+                                String pText = paragraphs.nth(i).textContent();
+                                if (pText != null && !pText.trim().isEmpty()) {
+                                    fullDescription.append(pText).append("\n");
+                                }
+                            }
+                        }
+
+                        return fullDescription.toString();
                     }
                 } catch (Exception e) {
                     continue;
                 }
             }
 
-            // Fallback to full page
-            return page.textContent("body");
+            // Fallback to full page content
+            StringBuilder pageContent = new StringBuilder();
 
-        } catch (Exception e) {
-            return "";
-        }
-    }
+            // Get main body content
+            pageContent.append(page.textContent("body")).append("\n\n");
 
-    private void printSessionSummary() {
-        System.out.println("\n" + "=".repeat(60));
-        System.out.println("JOB APPLICATION SESSION COMPLETED");
-        System.out.println("=".repeat(60));
-        System.out.println("Total jobs checked: " + jobsChecked);
-        System.out.println("Easy Apply jobs found: " + easyApplyJobsFound);
-        System.out.println("Applications submitted: " + applicationsSubmitted);
-        System.out.println("=".repeat(60));
-    }
+            // Try to extract job description from common containers
+            String[] descContainers = {
+                ".job-description",
+                "#job-description",
+                "[class*='description']",
+                "[class*='job-details']",
+                "article",
+                "section"
+            };
 
-    public void setMaxApplications(int maxApplications) {
-        this.crawlerConfig.setMaxApplications(maxApplications);
-    }
+            for (String container : descContainers) {
+                try {
+                    Locator elements = page.locator(container);
+                    int count = elements.count();
 
-    public void close() {
-        if (page != null) {
-            page.close();
-        }
-        if (context != null) {
-            context.close();
-        }
-        if (playwright != null) {
-            playwright.close();
-        }
-    }
-
-    private static class JobInfo {
-
-        String title = "";
-        String company = "";
-    }
-
-    public static void main(String[] args) {
-        ReedCrawler crawler = null;
-
-        try {
-            crawler = new ReedCrawler();
-
-            crawler.setupBrowser();
-            crawler.openForLogin();
-            crawler.processJobsAndApply();
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (crawler != null) {
-                crawler.close();
+                    for (int i = 0; i < count; i++) {
+                        String text = elements.nth(i).textContent();
+                        if (text != null && text.length() > 100) { // Only include substantial content
+                            pageContent.append(text).append("\n\n");
+                        }
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
             }
+
+            return pageContent.toString();
+
+        } catch (Exception e) {
+            return page.textContent("body"); // Ultimate fallback
         }
     }
 }

@@ -16,6 +16,7 @@ public class CrawlerConfig {
 
     // Main configuration
     private String configFile;
+    private String crawlerName = "Reed";
 
     // CV Generation settings
     private String cvConfigFile;
@@ -23,10 +24,6 @@ public class CrawlerConfig {
     // Crawler settings
     private int maxApplications;
     private boolean debugMode;
-
-    // Directory settings
-    // private String tempDir;
-    // private String outputDir;
 
     // Browser settings
     private String browserDataDir;
@@ -74,12 +71,25 @@ public class CrawlerConfig {
     private String submitButtonSelectors;
     private String confirmationSelectors;
 
+    // In CrawlerConfig.java - add new fields
+    private int pollingRate; // milliseconds between polling actions
+    private int crawlingSpeed; // general speed multiplier (1-10)
+
     public CrawlerConfig() throws IOException {
         this(DEFAULT_CONFIG_FILE);
     }
 
     public CrawlerConfig(String configFilePath) throws IOException {
         this.configFile = configFilePath;
+        loadConfiguration();
+    }
+
+    /**
+     * Create a config specifically for a crawler type
+     */
+    public CrawlerConfig(String configFilePath, String crawlerName) throws IOException {
+        this.configFile = configFilePath;
+        this.crawlerName = crawlerName;
         loadConfiguration();
     }
 
@@ -90,7 +100,8 @@ public class CrawlerConfig {
         Path configPath = Paths.get(configFile);
 
         if (!Files.exists(configPath)) {
-            throw new IOException("Crawler configuration file not found: " + configFile);
+            System.out.println("Warning: Crawler configuration file not found: " + configFile + ", using defaults");
+            return;
         }
 
         try (FileInputStream fis = new FileInputStream(configPath.toFile())) {
@@ -109,10 +120,6 @@ public class CrawlerConfig {
         // Crawler settings
         this.maxApplications = 10;
         this.debugMode = false;
-
-        // Directories
-        // this.tempDir = "temp";
-        // this.outputDir = "temp/generated_cvs";
 
         // Browser settings
         this.browserDataDir = "playwright-session";
@@ -140,6 +147,26 @@ public class CrawlerConfig {
         this.processingFallbackDelay = 5000;
         this.confirmationDialogDelay = 2000;
 
+        this.pollingRate = 500;
+        this.crawlingSpeed = 5;
+
+        // Site-specific defaults
+        switch (crawlerName.toLowerCase()) {
+            case "reed":
+                setReedDefaults();
+                break;
+            case "indeed":
+                setIndeedDefaults();
+                break;
+            case "linkedin":
+                setLinkedInDefaults();
+                break;
+            default:
+                setReedDefaults(); // Default to Reed
+        }
+    }
+
+    private void setReedDefaults() {
         // Site settings
         this.baseUrl = "https://www.reed.co.uk/";
         this.searchKeywords = "web development";
@@ -161,17 +188,61 @@ public class CrawlerConfig {
         this.confirmationSelectors = "button:has-text('OK'),button:has-text('Ok'),button:has-text('Confirm'),button:has-text('Yes'),[data-qa*='confirm'],.modal button:has-text('OK'),.dialog button:has-text('OK')";
     }
 
+    private void setIndeedDefaults() {
+        // Indeed-specific settings
+        this.baseUrl = "https://www.indeed.com/";
+        this.searchInputSelector = "input#text-input-what,input[name='q']";
+
+        // Job search selectors
+        this.jobCardSelectors = ".job_seen_beacon,.resultContent,div[data-testid='job-card']";
+        this.jobDescriptionSelectors = "#jobDescriptionText,#job-description";
+        this.easyApplySelectors = ".iaP,.iaJobTitle button,button:has-text('Apply easily')";
+        this.easyApplyKeywords = "apply now,easy apply,apply easily,quick apply";
+
+        // Application selectors
+        this.applyButtonSelectors = ".ia-IndeedApplyButton,button:has-text('Apply now'),a:has-text('Apply now')";
+        this.updateButtonSelectors = "button:has-text('Edit'),button:has-text('Update')";
+        this.cvUploadSelectors = "button:has-text('upload'),button:has-text('Upload'),label:has-text('Upload resume')";
+        this.fileInputSelectors = "input[type='file'],input[accept*='pdf'],input[name*='resume']";
+        this.processingSelectors = ".processing,.loader,div[data-testid='loading']";
+        this.submitButtonSelectors = "button[type='submit'],button:has-text('Submit'),button:has-text('Apply')";
+        this.confirmationSelectors = ".modal button:has-text('OK'),.dialog button:has-text('Done'),button:has-text('Continue')";
+    }
+
+    private void setLinkedInDefaults() {
+        // LinkedIn-specific settings
+        this.baseUrl = "https://www.linkedin.com/jobs/";
+        this.searchInputSelector = "input.jobs-search-box__text-input";
+
+        // Job search selectors
+        this.jobCardSelectors = ".job-card-container,.jobs-search-results__list-item";
+        this.jobDescriptionSelectors = ".jobs-description,.jobs-box__html-content";
+        this.easyApplySelectors = "button.jobs-apply-button,button:has-text('Easy Apply')";
+        this.easyApplyKeywords = "easy apply";
+
+        // Application selectors
+        this.applyButtonSelectors = "button.jobs-apply-button,button:has-text('Apply'),button:has-text('Easy Apply')";
+        this.updateButtonSelectors = "button:has-text('Edit')";
+        this.cvUploadSelectors = "button:has-text('Upload resume'),input[name='resume-upload']";
+        this.fileInputSelectors = "input[type='file'],input[accept*='pdf']";
+        this.processingSelectors = ".artdeco-loader";
+        this.submitButtonSelectors = "button:has-text('Submit application'),button.artdeco-button--primary";
+        this.confirmationSelectors = "button:has-text('Done'),button:has-text('OK')";
+    }
+
     private void loadProperties(Properties properties) {
+        // Load crawler type-specific config if present
+        String configCrawlerName = properties.getProperty("crawler.name");
+        if (configCrawlerName != null && !configCrawlerName.isEmpty()) {
+            this.crawlerName = configCrawlerName;
+        }
+
         // CV Generation
         this.cvConfigFile = properties.getProperty("cv.config.file", this.cvConfigFile);
 
         // Crawler settings
         this.maxApplications = Integer.parseInt(properties.getProperty("crawler.max.applications", String.valueOf(this.maxApplications)));
         this.debugMode = Boolean.parseBoolean(properties.getProperty("crawler.debug.mode", String.valueOf(this.debugMode)));
-
-        // // Directories
-        // this.tempDir = properties.getProperty("crawler.temp.dir", this.tempDir);
-        // this.outputDir = properties.getProperty("crawler.output.dir", this.outputDir);
 
         // Browser settings
         this.browserDataDir = properties.getProperty("browser.data.dir", this.browserDataDir);
@@ -218,5 +289,16 @@ public class CrawlerConfig {
         this.processingSelectors = properties.getProperty("selectors.processing", this.processingSelectors);
         this.submitButtonSelectors = properties.getProperty("selectors.submit.button", this.submitButtonSelectors);
         this.confirmationSelectors = properties.getProperty("selectors.confirmation", this.confirmationSelectors);
+
+        this.pollingRate = Integer.parseInt(properties.getProperty("crawler.polling.rate", String.valueOf(this.pollingRate)));
+        this.crawlingSpeed = Integer.parseInt(properties.getProperty("crawler.speed", String.valueOf(this.crawlingSpeed)));
+    }
+
+    /**
+     * Create a site-specific configuration by name
+     */
+    public static CrawlerConfig forSite(String siteName) throws IOException {
+        String configFile = "configuration/" + siteName.toLowerCase() + "crawler.properties";
+        return new CrawlerConfig(configFile, siteName);
     }
 }
