@@ -82,6 +82,34 @@ public class App {
         aiService.shutdown();
     }
 
+    public static void generateFromConfigWithDescription(String jobDescription) throws Exception {
+        System.out.println("=== CV Generator - Config File Mode ===");
+
+        // Load configuration
+        System.out.println("Loading configuration...");
+        ConfigManager config = new ConfigManager();
+        config.setJobDescriptionContent(jobDescription);
+
+        // Initialize components
+        System.out.println("Initializing AI and template systems...");
+        TemplateLoader loader = new TemplateLoader(Paths.get(config.getTemplateDirectory()));
+        AiService aiService = new AiService(LLMModel.GPT_4_1_MINI);
+        CVGenerator generator = new CVGenerator(loader, aiService, config);
+
+        // Check if job URL is provided in config
+        if (config.hasJobUrl()) {
+            System.out.println("Job URL found in configuration, switching to URL mode...");
+            generator.generateFromJobUrl(config.getJobUrl(), config.getUserDataFile(),
+                    config.getCvPromptFile(), config.getCoverLetterPromptFile());
+        } else {
+            // Generate CV and cover letter using traditional method
+            System.out.println("Starting CV generation...");
+            generateWithAI(config, generator);
+        }
+
+        aiService.shutdown();
+    }
+
     private static void generateWithAI(ConfigManager config, CVGenerator generator) throws Exception {
         System.out.println("Generating documents with AI...");
         long startTime = System.currentTimeMillis();

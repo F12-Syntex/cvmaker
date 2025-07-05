@@ -185,6 +185,32 @@ public class CVGenerator {
         generateCVFromText(templateName, outputDir, outputPdfName);
     }
 
+    public void generateCVFromText(String templateName, String outputDir, String outputPdfName, ConfigManager config) throws Exception {
+        System.out.println("Loading template...");
+        String referenceTemplate = null;
+        if (templateName != null && !templateName.isEmpty()) {
+            try {
+                referenceTemplate = templateLoader.loadTex(templateName);
+            } catch (IOException e) {
+                System.out.println("No reference template found.");
+            }
+        }
+
+        System.out.println("Generating LaTeX with AI...");
+        String generatedLatex = aiService.generateDirectLatexCV(config.getUserDataContent(), referenceTemplate, config.getJobDescriptionContent(), config.getCvPromptContent());
+
+        System.out.println("Saving files...");
+        Path outputDirPath = Paths.get(outputDir);
+        Files.createDirectories(outputDirPath);
+        Path texOutputPath = outputDirPath.resolve("generated_cv.tex");
+        Files.writeString(texOutputPath, generatedLatex);
+
+        System.out.println("Compiling to PDF...");
+        compileLatexWithProgress(outputDirPath, texOutputPath, outputPdfName);
+
+        System.out.println("CV generation completed.");
+    }
+
     public void generateCVFromText(String templateName, String outputDir, String outputPdfName) throws Exception {
         System.out.println("Loading template...");
         String referenceTemplate = null;

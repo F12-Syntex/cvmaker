@@ -2,195 +2,108 @@ package com.cvmaker;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.select.Elements;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class JobDataFetcher {
-    
-    private final HttpClient httpClient;
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-    
-    public JobDataFetcher() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
-                .build();
-    }
-    
-    public JobData fetchJobData(String jobUrl) throws IOException, InterruptedException {
-        System.out.println("Fetching job data from: " + jobUrl);
-        
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(jobUrl))
-                .timeout(TIMEOUT)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .GET()
-                .build();
-        
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to fetch job data. HTTP status: " + response.statusCode());
-        }
-        
-        return parseJobData(response.body(), jobUrl);
-    }
-    
-    private JobData parseJobData(String html, String jobUrl) {
-        Document doc = Jsoup.parse(html);
-        
-        // Extract job title
-        String jobTitle = extractJobTitle(doc);
-        
-        // Extract job description
-        String jobDescription = extractJobDescription(doc);
-        
-        // Extract company name
-        String companyName = extractCompanyName(doc);
-        
-        // Generate a clean job name for folder structure
-        String jobName = generateJobName(jobTitle, companyName);
-        
-        return new JobData(jobTitle, companyName, jobDescription, jobUrl, jobName);
-    }
-    
-    private String extractJobTitle(Document doc) {
-        // Try multiple common selectors for job titles
-        String[] titleSelectors = {
-            "h1[data-testid='job-title']",
-            "h1.job-title",
-            "h1[class*='title']",
-            ".job-header h1",
-            "h1",
-            "[data-testid='jobTitle']",
-            ".jobsearch-JobInfoHeader-title"
-        };
-        
-        for (String selector : titleSelectors) {
-            Elements elements = doc.select(selector);
-            if (!elements.isEmpty()) {
-                String title = elements.first().text().trim();
-                if (!title.isEmpty()) {
-                    return title;
-                }
-            }
-        }
-        
-        // Fallback to page title
-        String pageTitle = doc.title();
-        if (pageTitle != null && !pageTitle.isEmpty()) {
-            return pageTitle.replaceAll("\\s*-\\s*.*", "").trim();
-        }
-        
-        return "Unknown Position";
-    }
-    
-    private String extractCompanyName(Document doc) {
-        // Try multiple common selectors for company names
-        String[] companySelectors = {
-            "[data-testid='company-name']",
-            ".company-name",
-            "[class*='company']",
-            ".job-header .company",
-            "[data-testid='companyName']",
-            ".jobsearch-InlineCompanyRating"
-        };
-        
-        for (String selector : companySelectors) {
-            Elements elements = doc.select(selector);
-            if (!elements.isEmpty()) {
-                String company = elements.first().text().trim();
-                if (!company.isEmpty()) {
-                    return company;
-                }
-            }
-        }
-        
-        return "Unknown Company";
-    }
-    
-    private String extractJobDescription(Document doc) {
-        // Try multiple common selectors for job descriptions
-        String[] descriptionSelectors = {
-            "[data-testid='job-description']",
-            ".job-description",
-            ".jobsearch-jobDescriptionText",
-            "[class*='description']",
-            ".job-details",
-            "main",
-            ".content"
-        };
-        
-        for (String selector : descriptionSelectors) {
-            Elements elements = doc.select(selector);
-            if (!elements.isEmpty()) {
-                String description = elements.first().text().trim();
-                if (description.length() > 100) { // Ensure it's substantial content
-                    return description;
-                }
-            }
-        }
-        
-        // Fallback to body text (filtered)
-        String bodyText = doc.body().text();
-        if (bodyText.length() > 500) {
-            return bodyText;
-        }
-        
-        return "Job description could not be extracted from the provided URL.";
-    }
-    
-    private String generateJobName(String jobTitle, String companyName) {
-        String combined = jobTitle + " " + companyName;
-        
-        // Clean the string for use as folder name
-        String cleaned = combined.replaceAll("[^a-zA-Z0-9\\s-]", "")
-                .replaceAll("\\s+", "_")
-                .replaceAll("_{2,}", "_")
-                .trim();
-        
-        // Limit length
-        if (cleaned.length() > 100) {
-            cleaned = cleaned.substring(0, 100);
-        }
-        
-        // Remove trailing underscores
-        cleaned = cleaned.replaceAll("_+$", "");
-        
-        return cleaned.isEmpty() ? "Unknown_Job" : cleaned;
-    }
     
     public static class JobData {
         private final String jobTitle;
         private final String companyName;
         private final String jobDescription;
-        private final String jobUrl;
         private final String jobName;
         
-        public JobData(String jobTitle, String companyName, String jobDescription, String jobUrl, String jobName) {
+        public JobData(String jobTitle, String companyName, String jobDescription) {
             this.jobTitle = jobTitle;
             this.companyName = companyName;
             this.jobDescription = jobDescription;
-            this.jobUrl = jobUrl;
-            this.jobName = jobName;
+            this.jobName = generateJobName(jobTitle, companyName);
         }
         
-        // Getters
+        private String generateJobName(String title, String company) {
+            String safeName = (title + "_" + company)
+                .replaceAll("[^a-zA-Z0-9\\s-]", "")
+                .replaceAll("\\s+", "_")
+                .toLowerCase();
+            return safeName.length() > 50 ? safeName.substring(0, 50) : safeName;
+        }
+        
         public String getJobTitle() { return jobTitle; }
         public String getCompanyName() { return companyName; }
         public String getJobDescription() { return jobDescription; }
-        public String getJobUrl() { return jobUrl; }
         public String getJobName() { return jobName; }
-        
-        @Override
-        public String toString() {
-            return String.format("JobData{title='%s', company='%s', name='%s', url='%s'}", 
-                    jobTitle, companyName, jobName, jobUrl);
+    }
+    
+    public JobData fetchJobData(String source) throws IOException {
+        // Check if source is a file path or URL
+        if (isFilePath(source)) {
+            return fetchFromFile(source);
+        } else {
+            return fetchFromUrl(source);
         }
+    }
+    
+    private boolean isFilePath(String source) {
+        // Check if it's a local file path (contains backslashes or doesn't start with http)
+        return source.contains("\\") || 
+               source.contains("/") && !source.startsWith("http") ||
+               Paths.get(source).toFile().exists();
+    }
+    
+    private JobData fetchFromFile(String filePath) throws IOException {
+        Path path = Paths.get(filePath);
+        
+        if (!Files.exists(path)) {
+            throw new IOException("File not found: " + filePath);
+        }
+        
+        String content = Files.readString(path);
+        
+        // Extract job details from file content
+        // For now, using placeholder values - you may want to parse the content
+        String jobTitle = extractJobTitle(content);
+        String companyName = extractCompanyName(content);
+        
+        return new JobData(jobTitle, companyName, content);
+    }
+    
+    private JobData fetchFromUrl(String url) throws IOException {
+        try {
+            URI uri = URI.create(url);
+            // Your existing URL fetching logic here
+            // This is where you'd implement web scraping
+            
+            // Placeholder implementation
+            return new JobData("Software Engineer", "Tech Company", "Job description from URL: " + url);
+            
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid URL format: " + url, e);
+        }
+    }
+    
+    private String extractJobTitle(String content) {
+        // Simple extraction - you may want to improve this
+        String[] lines = content.split("\n");
+        for (String line : lines) {
+            if (line.toLowerCase().contains("title:") || 
+                line.toLowerCase().contains("position:") ||
+                line.toLowerCase().contains("role:")) {
+                return line.substring(line.indexOf(":") + 1).trim();
+            }
+        }
+        return "Software Developer"; // Default
+    }
+    
+    private String extractCompanyName(String content) {
+        // Simple extraction - you may want to improve this
+        String[] lines = content.split("\n");
+        for (String line : lines) {
+            if (line.toLowerCase().contains("company:") || 
+                line.toLowerCase().contains("employer:")) {
+                return line.substring(line.indexOf(":") + 1).trim();
+            }
+        }
+        return "Unknown Company"; // Default
     }
 }

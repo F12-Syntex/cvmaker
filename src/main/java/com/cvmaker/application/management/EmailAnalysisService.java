@@ -65,6 +65,10 @@ public class EmailAnalysisService {
         2. Interview scheduling/confirmation for a position the user has applied to
         3. Direct recruiter outreach specifically about a job opportunity for the user (not general newsletters)
         4. Follow-up communications about the user's specific application or interview
+
+        OR
+
+        1. email contains "We've sent your application to X" and similar themes, as they are likely related to the user's job application
             
         EXPLICITLY IGNORE ALL OF THESE (even if they contain job-related keywords):
         - General career advice or tips
@@ -198,7 +202,7 @@ public class EmailAnalysisService {
         }
 
         String combinedText = (from + " " + body).toLowerCase();
-        
+
         if (combinedText.contains("linkedin") || from.toLowerCase().contains("linkedin")) {
             return "LinkedIn";
         } else if (combinedText.contains("indeed") || from.toLowerCase().contains("indeed")) {
