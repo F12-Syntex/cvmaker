@@ -23,14 +23,14 @@ public class ReedCrawler {
     private BrowserContext context;
     private Page page;
     private Set<String> processedUrls;
-    
+
     // Common search terms for software jobs
     private static final String[] SOFTWARE_KEYWORDS = {
-        "software engineer", "java developer", "python developer", 
+        "software engineer", "java developer", "python developer",
         "frontend developer", "backend developer", "full stack developer",
         "software developer", "web developer", "mobile developer"
     };
-    
+
     // Reed.co.uk specific selectors
     private static final String SEARCH_INPUT = "input[name='keywords']";
     private static final String SEARCH_BUTTON = "input[type='submit'][value='Search jobs']";
@@ -129,7 +129,7 @@ public class ReedCrawler {
             });
 
             System.out.println("✅ Browser setup complete for Reed.co.uk");
-            
+
         } catch (Exception e) {
             System.err.println("❌ DEBUG: Failed to setup browser: " + e.getMessage());
             e.printStackTrace();
@@ -340,7 +340,7 @@ public class ReedCrawler {
             scanner.nextLine();
 
             System.out.println("✅ DEBUG: User confirmed login completion");
-            
+
         } catch (Exception e) {
             System.err.println("❌ DEBUG: Exception in openForLogin: " + e.getMessage());
             e.printStackTrace();
@@ -349,36 +349,36 @@ public class ReedCrawler {
 
     public void crawlAllJobs() {
         System.out.println("🚀 Starting comprehensive job crawl on Reed.co.uk...");
-        
+
         for (String keyword : SOFTWARE_KEYWORDS) {
             System.out.println("\n🔍 Searching for: " + keyword);
-            
+
             try {
                 searchJobs(keyword);
                 crawlSearchResults();
-                
+
                 // Wait between searches to be respectful
                 page.waitForTimeout(2000);
-                
+
             } catch (Exception e) {
                 System.err.println("❌ Error searching for '" + keyword + "': " + e.getMessage());
                 continue;
             }
         }
-        
+
         System.out.println("\n✅ Completed crawling all keywords");
         System.out.println("📊 Total URLs processed: " + processedUrls.size());
     }
 
     private void searchJobs(String keyword) {
         System.out.println("🔍 DEBUG: Performing search for: " + keyword);
-        
+
         try {
             // Go to Reed.co.uk homepage first
             page.navigate("https://www.reed.co.uk/");
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
             page.waitForTimeout(2000);
-            
+
             // Find and fill search input
             Locator searchInput = page.locator(SEARCH_INPUT).first();
             if (searchInput.isVisible()) {
@@ -387,7 +387,7 @@ public class ReedCrawler {
                 searchInput.fill("");
                 searchInput.type(keyword, new Locator.TypeOptions().setDelay(100));
                 page.waitForTimeout(1000);
-                
+
                 // Click search button
                 Locator searchButton = page.locator(SEARCH_BUTTON).first();
                 if (searchButton.isVisible()) {
@@ -406,109 +406,164 @@ public class ReedCrawler {
             } else {
                 System.out.println("❌ DEBUG: Could not find search input");
             }
-            
+
         } catch (Exception e) {
             System.err.println("❌ DEBUG: Error performing search: " + e.getMessage());
         }
     }
 
-    private void crawlSearchResults() {
-        System.out.println("📋 DEBUG: Crawling search results...");
-        
-        int pageCount = 1;
-        int maxPages = 5; // Limit pages per search
-        
-        do {
-            System.out.println("📄 DEBUG: Processing page " + pageCount);
-            
-            // Scroll to load dynamic content
-            scrollPage();
-            
-            // Find all job cards on current page
-            List<JobInfo> jobs = extractJobsFromPage();
-            System.out.println("📊 DEBUG: Found " + jobs.size() + " jobs on this page");
-            
-            // Process each job
-            for (JobInfo job : jobs) {
-                if (!processedUrls.contains(job.url)) {
-                    processedUrls.add(job.url);
-                    processJob(job);
-                }
-            }
-            
-            pageCount++;
-            
-        } while (pageCount <= maxPages && goToNextPage());
-    }
-
     private List<JobInfo> extractJobsFromPage() {
         List<JobInfo> jobs = new ArrayList<>();
-        
+
         try {
-            Locator jobCards = page.locator(JOB_CARDS);
-            int count = jobCards.count();
-            System.out.println("📊 DEBUG: Found " + count + " job cards");
-            
-            for (int i = 0; i < count; i++) {
+            // Target the specific job card structure
+            String[] jobCardSelectors = {
+                ".job-card_jobCard__MkcJD", // Your specific class
+                "[class*='job-card_jobCard']", // Partial match
+                ".card.job-card", // Generic fallback
+                ".job-card"
+            };
+
+            Locator jobCards = null;
+            String workingSelector = "";
+
+            // Find which selector works
+            for (String selector : jobCardSelectors) {
                 try {
-                    Locator card = jobCards.nth(i);
-                    
-                    // Extract job information
-                    JobInfo job = new JobInfo();
-                    
-                    // Get job title
-                    Locator titleLink = card.locator("h3 a, .job-title a").first();
-                    if (titleLink.isVisible()) {
-                        job.title = titleLink.textContent().trim();
-                        job.url = makeAbsoluteUrl(titleLink.getAttribute("href"));
+                    Locator testCards = page.locator(selector);
+                    int count = testCards.count();
+                    System.out.println("📊 DEBUG: Selector '" + selector + "' found " + count + " cards");
+
+                    if (count > 0) {
+                        jobCards = testCards;
+                        workingSelector = selector;
+                        break;
                     }
-                    
-                    // Get company
-                    Locator companyElement = card.locator(".gtmJobListingPostedBy, .company").first();
-                    if (companyElement.isVisible()) {
-                        job.company = companyElement.textContent().trim();
-                    }
-                    
-                    // Get location
-                    Locator locationElement = card.locator(".location, .gtmJobListingLocation").first();
-                    if (locationElement.isVisible()) {
-                        job.location = locationElement.textContent().trim();
-                    }
-                    
-                    // Check for Easy Apply button
-                    Locator easyApplyBtn = card.locator(EASY_APPLY_BUTTON).first();
-                    job.hasEasyApply = easyApplyBtn.isVisible();
-                    
-                    if (isValidJob(job)) {
-                        jobs.add(job);
-                        System.out.println("✅ DEBUG: Extracted job: " + job.title + " (Easy Apply: " + job.hasEasyApply + ")");
-                    }
-                    
                 } catch (Exception e) {
-                    System.out.println("❌ DEBUG: Error extracting job " + i + ": " + e.getMessage());
                     continue;
                 }
             }
-            
+
+            if (jobCards == null) {
+                System.out.println("❌ DEBUG: No job cards found with any selector");
+                return jobs;
+            }
+
+            int count = jobCards.count();
+            System.out.println("✅ DEBUG: Using selector '" + workingSelector + "' - found " + count + " job cards");
+
+            // Limit to first 3 jobs for testing
+            for (int i = 0; i < Math.min(count, 3); i++) {
+                try {
+                    Locator card = jobCards.nth(i);
+
+                    JobInfo job = new JobInfo();
+                    job.cardLocator = card;
+
+                    // Try to extract title from within the card
+                    try {
+                        Locator titleElement = card.locator("h3, .job-title, [class*='jobTitle'], [class*='title']").first();
+                        if (titleElement.isVisible()) {
+                            job.title = titleElement.textContent().trim();
+                        }
+                    } catch (Exception e) {
+                        job.title = "Job " + (i + 1); // Fallback title
+                    }
+
+                    // Try to extract company
+                    try {
+                        Locator companyElement = card.locator(".company, [class*='company'], [data-qa*='company']").first();
+                        if (companyElement.isVisible()) {
+                            job.company = companyElement.textContent().trim();
+                        }
+                    } catch (Exception e) {
+                        job.company = "Company not found";
+                    }
+
+                    job.url = "card-" + i; // Placeholder since we're clicking cards not links
+
+                    if (job.title != null && !job.title.isEmpty()) {
+                        jobs.add(job);
+                        System.out.println("✅ DEBUG: Extracted job card " + i + ": " + job.title);
+                    }
+
+                } catch (Exception e) {
+                    System.out.println("❌ DEBUG: Error extracting job card " + i + ": " + e.getMessage());
+                    continue;
+                }
+            }
+
         } catch (Exception e) {
-            System.err.println("❌ DEBUG: Error extracting jobs: " + e.getMessage());
+            System.err.println("❌ DEBUG: Error extracting job cards: " + e.getMessage());
         }
-        
+
         return jobs;
     }
 
-    private void processJob(JobInfo job) {
-        System.out.println("\n📝 Processing: " + job.title);
+    private void clickOnJob(JobInfo job) {
+        System.out.println("\n🖱️ PHASE 1: Clicking on job: " + job.title);
         System.out.println("🏢 Company: " + job.company);
         System.out.println("📍 Location: " + job.location);
         System.out.println("🔗 URL: " + job.url);
         System.out.println("⚡ Easy Apply: " + (job.hasEasyApply ? "YES" : "NO"));
-        
-        if (job.hasEasyApply) {
-            System.out.println("🎯 Found Easy Apply job - Phase 1 complete");
-            // Phase 1: Just identify Easy Apply jobs
-            // Future phases will interact with the Easy Apply functionality
+
+        try {
+            // Store current URL to compare later
+            String originalUrl = page.url();
+            System.out.println("📍 DEBUG: Current URL before click: " + originalUrl);
+
+            // Add human-like delay before clicking
+            int randomDelay = 1000 + (int) (Math.random() * 2000);
+            System.out.println("⏳ DEBUG: Waiting " + randomDelay + "ms before clicking job...");
+            page.waitForTimeout(randomDelay);
+
+            // Scroll to the job card to make sure it's visible
+            if (job.cardLocator != null) {
+                job.cardLocator.scrollIntoViewIfNeeded();
+                page.waitForTimeout(500);
+            }
+
+            // Click on the job title link
+            if (job.titleLocator != null && job.titleLocator.isVisible()) {
+                System.out.println("🖱️ DEBUG: Clicking on job title link...");
+                job.titleLocator.click();
+
+                // Wait for navigation or page change
+                page.waitForTimeout(3000);
+
+                String newUrl = page.url();
+                System.out.println("📍 DEBUG: URL after click: " + newUrl);
+
+                if (!newUrl.equals(originalUrl)) {
+                    System.out.println("✅ SUCCESS: Successfully clicked on job - page changed!");
+                    System.out.println("📄 DEBUG: New page title: " + page.title());
+
+                    // PHASE 1: Do nothing after clicking - just log success
+                    System.out.println("🎯 PHASE 1 COMPLETE: Job clicked, doing nothing as requested");
+
+                    // Wait a bit to see the job page
+                    page.waitForTimeout(2000);
+
+                    // Go back to search results for next job
+                    System.out.println("🔙 DEBUG: Going back to search results...");
+                    page.goBack();
+                    page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                    page.waitForTimeout(2000);
+
+                } else {
+                    System.out.println("⚠️ DEBUG: URL didn't change, job might have opened in same page");
+                }
+
+            } else {
+                System.out.println("❌ DEBUG: Job title link not found or not visible");
+            }
+
+        } catch (Exception e) {
+            System.err.println("❌ ERROR: Failed to click on job: " + e.getMessage());
+            e.printStackTrace();
         }
+
+        System.out.println("─".repeat(60));
     }
 
     private void scrollPage() {
@@ -530,6 +585,11 @@ public class ReedCrawler {
             Locator nextButton = page.locator(NEXT_PAGE_BUTTON).first();
             if (nextButton.isVisible() && nextButton.isEnabled()) {
                 System.out.println("✅ DEBUG: Found next page button");
+
+                // Add human-like delay before clicking next page
+                int randomDelay = 2000 + (int) (Math.random() * 3000);
+                page.waitForTimeout(randomDelay);
+
                 nextButton.click();
                 page.waitForLoadState(LoadState.DOMCONTENTLOADED);
                 page.waitForTimeout(3000);
@@ -547,12 +607,12 @@ public class ReedCrawler {
         if (job.title == null || job.title.isEmpty() || job.url == null || job.url.isEmpty()) {
             return false;
         }
-        
+
         String lowerTitle = job.title.toLowerCase();
-        return lowerTitle.contains("software") ||
-               lowerTitle.contains("developer") ||
-               lowerTitle.contains("engineer") ||
-               lowerTitle.contains("programmer");
+        return lowerTitle.contains("software")
+                || lowerTitle.contains("developer")
+                || lowerTitle.contains("engineer")
+                || lowerTitle.contains("programmer");
     }
 
     private String makeAbsoluteUrl(String url) {
@@ -579,25 +639,171 @@ public class ReedCrawler {
     }
 
     private static class JobInfo {
+
         String title = "";
         String company = "";
         String location = "";
         String url = "";
         boolean hasEasyApply = false;
+        Locator cardLocator = null;    // Store the job card locator
+        Locator titleLocator = null;   // Store the title link locator
     }
 
     public static void main(String[] args) {
         ReedCrawler crawler = new ReedCrawler();
-        
+
         try {
             crawler.setupBrowser();
             crawler.openForLogin();
             crawler.crawlAllJobs();
-            
+
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
             crawler.close();
+        }
+    }
+
+    private void crawlSearchResults() {
+        System.out.println("📋 DEBUG: Crawling search results...");
+
+        // Scroll to load dynamic content
+        scrollPage();
+
+        // Find all job cards on current page
+        List<JobInfo> jobs = extractJobsFromPage();
+        System.out.println("📊 DEBUG: Found " + jobs.size() + " jobs on this page");
+
+        // Click on ONLY the first job and STOP
+        if (!jobs.isEmpty()) {
+            JobInfo firstJob = jobs.get(0);
+            System.out.println("\n🎯 DEBUG: Clicking on FIRST job only, then stopping");
+            clickOnJobActually(firstJob, 0);
+        } else {
+            System.out.println("❌ No jobs found to click on");
+        }
+    }
+
+    private void clickOnJobActually(JobInfo job, int jobIndex) {
+        System.out.println("\n🖱️ PHASE 1: Actually clicking on job card: " + job.title);
+        System.out.println("🏢 Company: " + job.company);
+        System.out.println("📍 Location: " + job.location);
+
+        try {
+            // Store current URL to compare later
+            String originalUrl = page.url();
+            System.out.println("📍 DEBUG: Current URL before click: " + originalUrl);
+
+            // Target the specific job card structure you mentioned
+            System.out.println("🔍 DEBUG: Finding job card to click...");
+
+            // Reed.co.uk specific job card selectors based on your provided classes
+            String[] jobCardSelectors = {
+                ".job-card_jobCard__MkcJD", // The main job card
+                "[class*='job-card_jobCard']", // Partial match in case class changes
+                ".job-card_jobTitleBtn__block__ZeEY5", // The title button
+                "[class*='job-card_jobTitleBtn']", // Partial match for title button
+                ".card.job-card", // Generic fallback
+                ".job-card", // Another fallback
+                ".btn.btn-link[class*='jobTitleBtn']" // Button specific
+            };
+
+            for (String selector : jobCardSelectors) {
+                try {
+                    System.out.println("🔍 DEBUG: Trying job card selector: " + selector);
+                    Locator jobCards = page.locator(selector);
+                    int cardCount = jobCards.count();
+                    System.out.println("📊 DEBUG: Found " + cardCount + " job cards with selector: " + selector);
+
+                    if (cardCount > jobIndex) {
+                        Locator targetCard = jobCards.nth(jobIndex);
+
+                        if (targetCard.isVisible()) {
+                            // Get some info about the card we're about to click
+                            String cardText = targetCard.textContent();
+                            System.out.println("🎯 DEBUG: Found job card:");
+                            System.out.println("   Card text preview: " + (cardText.length() > 100 ? cardText.substring(0, 100) + "..." : cardText));
+
+                            // Scroll to the card
+                            System.out.println("📜 DEBUG: Scrolling to job card...");
+                            targetCard.scrollIntoViewIfNeeded();
+                            page.waitForTimeout(1000);
+
+                            // CLICK THE JOB CARD AND STOP!
+                            System.out.println("🖱️ CLICKING JOB CARD NOW!");
+                            targetCard.click();
+
+                            System.out.println("✅ CLICKED JOB CARD! STOPPING HERE TO WAIT FOR SITE REACTION...");
+                            System.out.println("🛑 PHASE 1: Click complete - waiting for your observation");
+                            System.out.println("📍 Current URL: " + page.url());
+
+                            // STOP HERE - Wait for user input to see what happens
+                            Scanner scanner = new Scanner(System.in);
+                            System.out.println("\n" + "=".repeat(60));
+                            System.out.println("⏸️  PAUSED AFTER CLICKING JOB CARD");
+                            System.out.println("Observe what happens on the website...");
+                            System.out.println("Press ENTER when ready to continue...");
+                            System.out.println("=".repeat(60));
+                            scanner.nextLine();
+
+                            return; // Exit method after clicking
+                        } else {
+                            System.out.println("❌ DEBUG: Job card not visible at index " + jobIndex);
+                        }
+                    } else {
+                        System.out.println("❌ DEBUG: Not enough job cards found for index " + jobIndex);
+                    }
+
+                } catch (Exception e) {
+                    System.out.println("❌ DEBUG: Error with selector " + selector + ": " + e.getMessage());
+                    continue;
+                }
+            }
+
+            System.out.println("❌ ERROR: Could not find any job card to click");
+
+        } catch (Exception e) {
+            System.err.println("❌ ERROR: Failed to click on job card: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private void checkForEasyApplyOnJobPage() {
+        System.out.println("🔍 DEBUG: Checking for Easy Apply button on job page...");
+
+        try {
+            // Multiple selectors for Easy Apply button
+            String[] easyApplySelectors = {
+                "button:has-text('Easy Apply')",
+                "a:has-text('Easy Apply')",
+                ".easy-apply",
+                "[data-qa='easy-apply']",
+                "button[class*='easy-apply']",
+                "a[class*='easy-apply']"
+            };
+
+            boolean easyApplyFound = false;
+
+            for (String selector : easyApplySelectors) {
+                try {
+                    Locator easyApplyBtn = page.locator(selector).first();
+                    if (easyApplyBtn.isVisible()) {
+                        System.out.println("✅ FOUND: Easy Apply button on job page!");
+                        System.out.println("🎯 PHASE 1: Found Easy Apply - not clicking yet");
+                        easyApplyFound = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
+            }
+
+            if (!easyApplyFound) {
+                System.out.println("❌ No Easy Apply button found on this job page");
+            }
+
+        } catch (Exception e) {
+            System.out.println("❌ Error checking for Easy Apply: " + e.getMessage());
         }
     }
 }
