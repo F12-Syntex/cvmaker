@@ -52,6 +52,77 @@ public class GoogleSheetsService {
     private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final List<String> SCOPES = Collections.singletonList(SheetsScopes.SPREADSHEETS);
 
+    // Define column metadata to make management easier
+    private static final List<ColumnMetadata> COLUMNS = Arrays.asList(
+            // VISIBLE COLUMNS (A-J)
+            new ColumnMetadata("Company", 200, true, "companyName", ColumnType.TEXT),
+            new ColumnMetadata("Position", 280, true, "positionTitle", ColumnType.TEXT),
+            new ColumnMetadata("Date Applied", 120, true, "date", ColumnType.DATE),
+            new ColumnMetadata("Status", 120, true, "applicationStatus", ColumnType.STATUS),
+            new ColumnMetadata("Provider", 100, true, "provider", ColumnType.TEXT),
+            new ColumnMetadata("Email Link", 80, true, "emailLink", ColumnType.HYPERLINK),
+            new ColumnMetadata("Application URL", 80, true, "applicationUrl", ColumnType.HYPERLINK),
+            new ColumnMetadata("Notes", 350, true, "extractedInfo", ColumnType.NOTES),
+            new ColumnMetadata("Contact Email", 150, true, "contactEmail", ColumnType.TEXT),
+
+            // HIDDEN COLUMNS (K-U) - for data storage
+            new ColumnMetadata("Work Location", 130, false, "workLocation", ColumnType.TEXT),
+            new ColumnMetadata("Interview Date", 120, false, "interviewDate", ColumnType.DATE),
+            new ColumnMetadata("Work Type", 100, false, "workType", ColumnType.TEXT),
+            new ColumnMetadata("Salary Range", 150, false, "salaryRange", ColumnType.TEXT),
+            new ColumnMetadata("Contact Person", 150, false, "contactPerson", ColumnType.TEXT),
+            new ColumnMetadata("Next Steps", 200, false, "nextSteps", ColumnType.TEXT),
+            new ColumnMetadata("Email ID", 150, false, "emailId", ColumnType.TEXT),
+            new ColumnMetadata("Deadline", 120, false, "applicationDeadline", ColumnType.TEXT),
+            new ColumnMetadata("Skills", 200, false, "requiredSkills", ColumnType.TEXT),
+            new ColumnMetadata("Rejection Reason", 200, false, "rejectionReason", ColumnType.TEXT),
+            new ColumnMetadata("Offer Details", 200, false, "offerDetails", ColumnType.TEXT),
+            new ColumnMetadata("Last Updated", 150, false, "lastUpdated", ColumnType.TIMESTAMP)
+    );
+
+    // Enum to define column types for specific formatting/handling
+    private enum ColumnType {
+        TEXT, DATE, STATUS, HYPERLINK, NOTES, TIMESTAMP
+    }
+
+    // Class to encapsulate column metadata
+    private static class ColumnMetadata {
+
+        private final String displayName;
+        private final int pixelWidth;
+        private final boolean visible;
+        private final String fieldName;
+        private final ColumnType type;
+
+        public ColumnMetadata(String displayName, int pixelWidth, boolean visible, String fieldName, ColumnType type) {
+            this.displayName = displayName;
+            this.pixelWidth = pixelWidth;
+            this.visible = visible;
+            this.fieldName = fieldName;
+            this.type = type;
+        }
+
+        public String getDisplayName() {
+            return displayName;
+        }
+
+        public int getPixelWidth() {
+            return pixelWidth;
+        }
+
+        public boolean isVisible() {
+            return visible;
+        }
+
+        public String getFieldName() {
+            return fieldName;
+        }
+
+        public ColumnType getType() {
+            return type;
+        }
+    }
+
     private Sheets sheetsService;
     private String spreadsheetId;
 
@@ -98,7 +169,7 @@ public class GoogleSheetsService {
         }
     }
 
-    // NEW METHOD: Bulk update all applications in one operation
+    // Modified bulkUpdateAllApplications to use column metadata
     public void bulkUpdateAllApplications(Map<String, JobApplicationData> consolidatedApplications) throws IOException {
         System.out.println("Starting bulk update of " + consolidatedApplications.size() + " applications...");
 
@@ -111,36 +182,7 @@ public class GoogleSheetsService {
 
         for (JobApplicationData jobData : consolidatedApplications.values()) {
             if (jobData.isJobRelated()) {
-                String formattedDate = formatDateToHumanReadable(jobData.getDate());
-                String formattedInterviewDate = formatDateToHumanReadable(jobData.getInterviewDate());
-
-                List<Object> rowData = Arrays.asList(
-                        // VISIBLE COLUMNS (A-J)
-                        jobData.getCompanyName() != null ? jobData.getCompanyName() : "", // A: Company
-                        jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "", // B: Position
-                        formattedDate, // C: Date Applied
-                        jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied", // D: Status
-                        jobData.getProvider() != null ? jobData.getProvider() : "", // E: Provider
-                        jobData.getWorkLocation() != null ? jobData.getWorkLocation() : "", // F: Work Location
-                        formattedInterviewDate, // G: Interview Date
-                        "View Email", // H: Email Link (will be converted to hyperlink)
-                        jobData.getApplicationUrl() != null ? "Apply" : "", // I: Application URL (will be converted to hyperlink)
-                        combineNotes(jobData), // J: Notes
-
-                        // HIDDEN COLUMNS (K-U) - for data storage
-                        jobData.getWorkType() != null ? jobData.getWorkType() : "", // K: Work Type
-                        jobData.getSalaryRange() != null ? jobData.getSalaryRange() : "", // L: Salary Range
-                        jobData.getContactPerson() != null ? jobData.getContactPerson() : "", // M: Contact Person
-                        jobData.getNextSteps() != null ? jobData.getNextSteps() : "", // N: Next Steps
-                        jobData.getEmailId(), // O: Email ID
-                        jobData.getContactEmail() != null ? jobData.getContactEmail() : "", // P: Contact Email
-                        jobData.getApplicationDeadline() != null ? jobData.getApplicationDeadline() : "", // Q: Deadline
-                        jobData.getRequiredSkills() != null ? jobData.getRequiredSkills() : "", // R: Skills
-                        jobData.getRejectionReason() != null ? jobData.getRejectionReason() : "", // S: Rejection Reason
-                        jobData.getOfferDetails() != null ? jobData.getOfferDetails() : "", // T: Offer Details
-                        LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) // U: Last Updated
-                );
-
+                List<Object> rowData = createRowData(jobData);
                 allRows.add(rowData);
                 applicationsWithUrls.add(jobData);
             }
@@ -154,7 +196,7 @@ public class GoogleSheetsService {
         // Bulk insert all data at once
         ValueRange body = new ValueRange().setValues(allRows);
         sheetsService.spreadsheets().values()
-                .update(spreadsheetId, "A2:U" + (allRows.size() + 1), body)
+                .update(spreadsheetId, "A2:" + getColumnLetter(COLUMNS.size()) + (allRows.size() + 1), body)
                 .setValueInputOption("RAW")
                 .execute();
 
@@ -169,7 +211,7 @@ public class GoogleSheetsService {
     private void clearExistingData() throws IOException {
         // Get the current data to determine how many rows to clear
         ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, "A2:U")
+                .get(spreadsheetId, "A2:" + getColumnLetter(COLUMNS.size()))
                 .execute();
 
         List<List<Object>> values = response.getValues();
@@ -179,7 +221,7 @@ public class GoogleSheetsService {
             // Clear the range (this preserves formatting but removes data)
             com.google.api.services.sheets.v4.model.ClearValuesRequest clearRequest = new com.google.api.services.sheets.v4.model.ClearValuesRequest();
             sheetsService.spreadsheets().values()
-                    .clear(spreadsheetId, "A2:U" + (rowsToDelete + 1), clearRequest)
+                    .clear(spreadsheetId, "A2:" + getColumnLetter(COLUMNS.size()) + (rowsToDelete + 1), clearRequest)
                     .execute();
 
             System.out.println("Cleared " + rowsToDelete + " existing rows");
@@ -189,17 +231,32 @@ public class GoogleSheetsService {
     private void addAllHyperlinksInBatch(List<JobApplicationData> applications) throws IOException {
         List<Request> requests = new ArrayList<>();
 
+        // Find indices for hyperlink columns
+        int emailLinkIndex = -1;
+        int applicationUrlIndex = -1;
+
+        for (int i = 0; i < COLUMNS.size(); i++) {
+            ColumnMetadata column = COLUMNS.get(i);
+            if (column.getType() == ColumnType.HYPERLINK) {
+                if (column.getFieldName().equals("emailLink")) {
+                    emailLinkIndex = i;
+                } else if (column.getFieldName().equals("applicationUrl")) {
+                    applicationUrlIndex = i;
+                }
+            }
+        }
+
         for (int i = 0; i < applications.size(); i++) {
             JobApplicationData jobData = applications.get(i);
             int rowIndex = i + 2; // +2 because data starts at row 2 (1-indexed)
 
-            // Add hyperlink for email link (column H = index 7)
-            if (jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
+            // Add hyperlink for email link
+            if (emailLinkIndex >= 0 && jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
                 requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                         .setRange(new GridRange()
                                 .setSheetId(0)
                                 .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
-                                .setStartColumnIndex(7).setEndColumnIndex(8))
+                                .setStartColumnIndex(emailLinkIndex).setEndColumnIndex(emailLinkIndex + 1))
                         .setRows(Collections.singletonList(new RowData()
                                 .setValues(Collections.singletonList(new CellData()
                                         .setUserEnteredValue(new ExtendedValue()
@@ -207,13 +264,13 @@ public class GoogleSheetsService {
                         .setFields("userEnteredValue")));
             }
 
-            // Add hyperlink for application URL (column I = index 8)
-            if (jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
+            // Add hyperlink for application URL
+            if (applicationUrlIndex >= 0 && jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
                 requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                         .setRange(new GridRange()
                                 .setSheetId(0)
                                 .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
-                                .setStartColumnIndex(8).setEndColumnIndex(9))
+                                .setStartColumnIndex(applicationUrlIndex).setEndColumnIndex(applicationUrlIndex + 1))
                         .setRows(Collections.singletonList(new RowData()
                                 .setValues(Collections.singletonList(new CellData()
                                         .setUserEnteredValue(new ExtendedValue()
@@ -238,7 +295,7 @@ public class GoogleSheetsService {
         }
     }
 
-    // Keep the original single update method for individual updates
+    // Update updateJobApplicationData to use column metadata
     public void updateJobApplicationData(JobApplicationData jobData) throws IOException {
         List<List<Object>> existingData = getExistingData();
 
@@ -259,8 +316,17 @@ public class GoogleSheetsService {
                     companyRowIndices.add(actualRowIndex);
 
                     try {
-                        if (row.size() >= 21 && row.get(20) != null) { // Last Updated column
-                            LocalDateTime entryDate = LocalDateTime.parse(row.get(20).toString());
+                        // Find index of lastUpdated column
+                        int lastUpdatedIndex = -1;
+                        for (int j = 0; j < COLUMNS.size(); j++) {
+                            if (COLUMNS.get(j).getFieldName().equals("lastUpdated")) {
+                                lastUpdatedIndex = j;
+                                break;
+                            }
+                        }
+
+                        if (lastUpdatedIndex >= 0 && row.size() > lastUpdatedIndex && row.get(lastUpdatedIndex) != null) {
+                            LocalDateTime entryDate = LocalDateTime.parse(row.get(lastUpdatedIndex).toString());
                             if (latestDate == null || entryDate.isAfter(latestDate)) {
                                 latestDate = entryDate;
                                 latestRowIndex = actualRowIndex;
@@ -275,43 +341,14 @@ public class GoogleSheetsService {
             }
         }
 
-        // Format dates
-        String formattedDate = formatDateToHumanReadable(jobData.getDate());
-        String formattedInterviewDate = formatDateToHumanReadable(jobData.getInterviewDate());
-
-        // Create row data in the exact column order (A-U)
-        List<Object> rowData = Arrays.asList(
-                // VISIBLE COLUMNS (A-J)
-                jobData.getCompanyName() != null ? jobData.getCompanyName() : "", // A: Company
-                jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "", // B: Position
-                formattedDate, // C: Date Applied
-                jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied", // D: Status
-                jobData.getProvider() != null ? jobData.getProvider() : "", // E: Provider
-                jobData.getWorkLocation() != null ? jobData.getWorkLocation() : "", // F: Work Location
-                formattedInterviewDate, // G: Interview Date
-                "View Email", // Will be converted to hyperlink                                      // H: Email Link
-                jobData.getApplicationUrl() != null ? "Apply" : "", // Will be converted to hyperlink // I: Application URL
-                combineNotes(jobData), // J: Notes
-
-                // HIDDEN COLUMNS (K-U) - for data storage
-                jobData.getWorkType() != null ? jobData.getWorkType() : "", // K: Work Type
-                jobData.getSalaryRange() != null ? jobData.getSalaryRange() : "", // L: Salary Range
-                jobData.getContactPerson() != null ? jobData.getContactPerson() : "", // M: Contact Person
-                jobData.getNextSteps() != null ? jobData.getNextSteps() : "", // N: Next Steps
-                jobData.getEmailId(), // O: Email ID
-                jobData.getContactEmail() != null ? jobData.getContactEmail() : "", // P: Contact Email
-                jobData.getApplicationDeadline() != null ? jobData.getApplicationDeadline() : "", // Q: Deadline
-                jobData.getRequiredSkills() != null ? jobData.getRequiredSkills() : "", // R: Skills
-                jobData.getRejectionReason() != null ? jobData.getRejectionReason() : "", // S: Rejection Reason
-                jobData.getOfferDetails() != null ? jobData.getOfferDetails() : "", // T: Offer Details
-                LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) // U: Last Updated
-        );
+        // Create row data using the metadata
+        List<Object> rowData = createRowData(jobData);
 
         if (companyRowIndices.isEmpty()) {
             // Add new row
             ValueRange body = new ValueRange().setValues(Collections.singletonList(rowData));
             sheetsService.spreadsheets().values()
-                    .append(spreadsheetId, "A2:U", body)
+                    .append(spreadsheetId, "A2:" + getColumnLetter(COLUMNS.size()) + "2", body)
                     .setValueInputOption("RAW")
                     .setInsertDataOption("INSERT_ROWS")
                     .execute();
@@ -325,7 +362,7 @@ public class GoogleSheetsService {
         } else {
             // Update existing row
             ValueRange body = new ValueRange().setValues(Collections.singletonList(rowData));
-            String range = "A" + latestRowIndex + ":U" + latestRowIndex;
+            String range = "A" + latestRowIndex + ":" + getColumnLetter(COLUMNS.size()) + latestRowIndex;
             sheetsService.spreadsheets().values()
                     .update(spreadsheetId, range, body)
                     .setValueInputOption("RAW")
@@ -346,13 +383,28 @@ public class GoogleSheetsService {
     private void addHyperlinks(int rowIndex, JobApplicationData jobData) throws IOException {
         List<Request> requests = new ArrayList<>();
 
-        // Add hyperlink for email link (column H = index 7)
-        if (jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
+        // Find indices for hyperlink columns
+        int emailLinkIndex = -1;
+        int applicationUrlIndex = -1;
+
+        for (int i = 0; i < COLUMNS.size(); i++) {
+            ColumnMetadata column = COLUMNS.get(i);
+            if (column.getType() == ColumnType.HYPERLINK) {
+                if (column.getFieldName().equals("emailLink")) {
+                    emailLinkIndex = i;
+                } else if (column.getFieldName().equals("applicationUrl")) {
+                    applicationUrlIndex = i;
+                }
+            }
+        }
+
+        // Add hyperlink for email link
+        if (emailLinkIndex >= 0 && jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
             requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                     .setRange(new GridRange()
                             .setSheetId(0)
                             .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
-                            .setStartColumnIndex(7).setEndColumnIndex(8))
+                            .setStartColumnIndex(emailLinkIndex).setEndColumnIndex(emailLinkIndex + 1))
                     .setRows(Collections.singletonList(new RowData()
                             .setValues(Collections.singletonList(new CellData()
                                     .setUserEnteredValue(new ExtendedValue()
@@ -360,13 +412,13 @@ public class GoogleSheetsService {
                     .setFields("userEnteredValue")));
         }
 
-        // Add hyperlink for application URL (column I = index 8)
-        if (jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
+        // Add hyperlink for application URL
+        if (applicationUrlIndex >= 0 && jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
             requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                     .setRange(new GridRange()
                             .setSheetId(0)
                             .setStartRowIndex(rowIndex - 1).setEndRowIndex(rowIndex)
-                            .setStartColumnIndex(8).setEndColumnIndex(9))
+                            .setStartColumnIndex(applicationUrlIndex).setEndColumnIndex(applicationUrlIndex + 1))
                     .setRows(Collections.singletonList(new RowData()
                             .setValues(Collections.singletonList(new CellData()
                                     .setUserEnteredValue(new ExtendedValue()
@@ -484,7 +536,7 @@ public class GoogleSheetsService {
 
     private List<List<Object>> getExistingData() throws IOException {
         ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, "A2:U")
+                .get(spreadsheetId, "A2:" + getColumnLetter(COLUMNS.size()))
                 .execute();
 
         List<List<Object>> values = response.getValues();
@@ -573,20 +625,16 @@ public class GoogleSheetsService {
         }
     }
 
+    // Modified setupEnhancedSpreadsheetHeaders to use column metadata
     private void setupEnhancedSpreadsheetHeaders() throws IOException {
-        // Headers with visible and hidden columns organized
-        List<List<Object>> headerValues = Collections.singletonList(Arrays.asList(
-                // VISIBLE COLUMNS (A-J)
-                "Company", "Position", "Date Applied", "Status", "Provider",
-                "Work Location", "Interview Date", "Email Link", "Application URL", "Notes",
-                // HIDDEN COLUMNS (K-U) - for data storage
-                "Work Type", "Salary Range", "Contact Person", "Next Steps", "Email ID",
-                "Contact Email", "Deadline", "Skills", "Rejection Reason", "Offer Details", "Last Updated"
-        ));
+        // Generate header values from column metadata
+        List<Object> headerValues = COLUMNS.stream()
+                .map(ColumnMetadata::getDisplayName)
+                .collect(java.util.stream.Collectors.toList());
 
         sheetsService.spreadsheets().values()
-                .update(spreadsheetId, "A1:U1",
-                        new ValueRange().setValues(headerValues))
+                .update(spreadsheetId, "A1:" + getColumnLetter(COLUMNS.size()) + "1",
+                        new ValueRange().setValues(Collections.singletonList(headerValues)))
                 .setValueInputOption("RAW")
                 .execute();
 
@@ -594,7 +642,7 @@ public class GoogleSheetsService {
 
         // Style header row with formatting
         List<CellData> headerCells = new ArrayList<>();
-        for (int i = 0; i < 21; i++) { // 21 total columns
+        for (int i = 0; i < COLUMNS.size(); i++) {
             CellData cellData = new CellData()
                     .setUserEnteredFormat(new CellFormat()
                             .setHorizontalAlignment("CENTER")
@@ -608,9 +656,30 @@ public class GoogleSheetsService {
                 .setRange(new GridRange()
                         .setSheetId(0)
                         .setStartRowIndex(0).setEndRowIndex(1)
-                        .setStartColumnIndex(0).setEndColumnIndex(21))
+                        .setStartColumnIndex(0).setEndColumnIndex(COLUMNS.size()))
                 .setRows(Collections.singletonList(new RowData().setValues(headerCells)))
                 .setFields("userEnteredFormat")));
+
+        // Set column widths and visibility based on metadata
+        for (int i = 0; i < COLUMNS.size(); i++) {
+            ColumnMetadata column = COLUMNS.get(i);
+            requests.add(new Request().setUpdateDimensionProperties(
+                    new UpdateDimensionPropertiesRequest()
+                            .setRange(new DimensionRange().setSheetId(0).setDimension("COLUMNS")
+                                    .setStartIndex(i).setEndIndex(i + 1))
+                            .setProperties(new DimensionProperties()
+                                    .setPixelSize(column.getPixelWidth())
+                                    .setHiddenByUser(!column.isVisible()))
+                            .setFields("pixelSize,hiddenByUser")));
+        }
+
+        // Find index of the last visible column
+        int lastVisibleColumnIndex = 0;
+        for (int i = 0; i < COLUMNS.size(); i++) {
+            if (COLUMNS.get(i).isVisible()) {
+                lastVisibleColumnIndex = i + 1;
+            }
+        }
 
         // Add conditional formatting for rejected applications
         requests.add(new Request().setAddConditionalFormatRule(
@@ -620,7 +689,7 @@ public class GoogleSheetsService {
                                         .setSheetId(0)
                                         .setStartRowIndex(1) // Start from row 2 (after header)
                                         .setStartColumnIndex(0) // Column A
-                                        .setEndColumnIndex(10))) // Through column J (visible columns)
+                                        .setEndColumnIndex(lastVisibleColumnIndex))) // Through last visible column
                                 .setBooleanRule(new com.google.api.services.sheets.v4.model.BooleanRule()
                                         .setCondition(new com.google.api.services.sheets.v4.model.BooleanCondition()
                                                 .setType("CUSTOM_FORMULA")
@@ -647,7 +716,7 @@ public class GoogleSheetsService {
                                         .setSheetId(0)
                                         .setStartRowIndex(1)
                                         .setStartColumnIndex(0)
-                                        .setEndColumnIndex(10)))
+                                        .setEndColumnIndex(lastVisibleColumnIndex)))
                                 .setBooleanRule(new com.google.api.services.sheets.v4.model.BooleanRule()
                                         .setCondition(new com.google.api.services.sheets.v4.model.BooleanCondition()
                                                 .setType("CUSTOM_FORMULA")
@@ -674,7 +743,7 @@ public class GoogleSheetsService {
                                         .setSheetId(0)
                                         .setStartRowIndex(1)
                                         .setStartColumnIndex(0)
-                                        .setEndColumnIndex(10)))
+                                        .setEndColumnIndex(lastVisibleColumnIndex)))
                                 .setBooleanRule(new com.google.api.services.sheets.v4.model.BooleanRule()
                                         .setCondition(new com.google.api.services.sheets.v4.model.BooleanCondition()
                                                 .setType("CUSTOM_FORMULA")
@@ -693,38 +762,6 @@ public class GoogleSheetsService {
                                                                 .setBlue(0.0f))))))
                         .setIndex(2)));
 
-        // Set optimized column widths for VISIBLE columns only
-        int[] visibleColumnWidths = {
-            200, // A: Company
-            280, // B: Position  
-            120, // C: Date Applied
-            120, // D: Status
-            100, // E: Provider
-            130, // F: Work Location
-            120, // G: Interview Date
-            80, // H: Email Link
-            80, // I: Application URL
-            350 // J: Notes
-        };
-
-        // Set widths for visible columns (A-J)
-        for (int i = 0; i < visibleColumnWidths.length; i++) {
-            requests.add(new Request().setUpdateDimensionProperties(
-                    new UpdateDimensionPropertiesRequest()
-                            .setRange(new DimensionRange().setSheetId(0).setDimension("COLUMNS")
-                                    .setStartIndex(i).setEndIndex(i + 1))
-                            .setProperties(new DimensionProperties().setPixelSize(visibleColumnWidths[i]))
-                            .setFields("pixelSize")));
-        }
-
-        // Hide all the data storage columns (K through U, which are indices 10-20)
-        requests.add(new Request().setUpdateDimensionProperties(
-                new UpdateDimensionPropertiesRequest()
-                        .setRange(new DimensionRange().setSheetId(0).setDimension("COLUMNS")
-                                .setStartIndex(10).setEndIndex(21))
-                        .setProperties(new DimensionProperties().setHiddenByUser(true))
-                        .setFields("hiddenByUser")));
-
         // Freeze the first row
         requests.add(new Request().setUpdateSheetProperties(
                 new UpdateSheetPropertiesRequest().setProperties(
@@ -732,14 +769,109 @@ public class GoogleSheetsService {
                                 new GridProperties().setFrozenRowCount(1)))
                         .setFields("gridProperties.frozenRowCount")));
 
-        // Create a basic filter for VISIBLE columns only (A-J)
+        // Create a basic filter for visible columns only
         requests.add(new Request().setSetBasicFilter(new SetBasicFilterRequest()
                 .setFilter(new BasicFilter().setRange(
                         new GridRange().setSheetId(0)
                                 .setStartRowIndex(0).setStartColumnIndex(0)
-                                .setEndColumnIndex(10)))));
+                                .setEndColumnIndex(lastVisibleColumnIndex)))));
 
         sheetsService.spreadsheets().batchUpdate(spreadsheetId,
                 new BatchUpdateSpreadsheetRequest().setRequests(requests)).execute();
+    }
+
+    // Helper method to create row data using column metadata
+    private List<Object> createRowData(JobApplicationData jobData) {
+        List<Object> rowData = new ArrayList<>();
+
+        for (ColumnMetadata column : COLUMNS) {
+            Object value = "";
+
+            switch (column.getFieldName()) {
+                case "companyName":
+                    value = jobData.getCompanyName() != null ? jobData.getCompanyName() : "";
+                    break;
+                case "positionTitle":
+                    value = jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "";
+                    break;
+                case "date":
+                    value = formatDateToHumanReadable(jobData.getDate());
+                    break;
+                case "applicationStatus":
+                    value = jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied";
+                    break;
+                case "provider":
+                    value = jobData.getProvider() != null ? jobData.getProvider() : "";
+                    break;
+                case "workLocation":
+                    value = jobData.getWorkLocation() != null ? jobData.getWorkLocation() : "";
+                    break;
+                case "interviewDate":
+                    value = formatDateToHumanReadable(jobData.getInterviewDate());
+                    break;
+                case "emailLink":
+                    value = "View Email";  // Will be converted to hyperlink
+                    break;
+                case "applicationUrl":
+                    value = jobData.getApplicationUrl() != null ? "Apply" : "";  // Will be converted to hyperlink
+                    break;
+                case "extractedInfo":
+                    value = combineNotes(jobData);
+                    break;
+                case "workType":
+                    value = jobData.getWorkType() != null ? jobData.getWorkType() : "";
+                    break;
+                case "salaryRange":
+                    value = jobData.getSalaryRange() != null ? jobData.getSalaryRange() : "";
+                    break;
+                case "contactPerson":
+                    value = jobData.getContactPerson() != null ? jobData.getContactPerson() : "";
+                    break;
+                case "nextSteps":
+                    value = jobData.getNextSteps() != null ? jobData.getNextSteps() : "";
+                    break;
+                case "emailId":
+                    value = jobData.getEmailId();
+                    break;
+                case "contactEmail":
+                    value = jobData.getContactEmail() != null ? jobData.getContactEmail() : "";
+                    break;
+                case "applicationDeadline":
+                    value = jobData.getApplicationDeadline() != null ? jobData.getApplicationDeadline() : "";
+                    break;
+                case "requiredSkills":
+                    value = jobData.getRequiredSkills() != null ? jobData.getRequiredSkills() : "";
+                    break;
+                case "rejectionReason":
+                    value = jobData.getRejectionReason() != null ? jobData.getRejectionReason() : "";
+                    break;
+                case "offerDetails":
+                    value = jobData.getOfferDetails() != null ? jobData.getOfferDetails() : "";
+                    break;
+                case "lastUpdated":
+                    value = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                    break;
+            }
+
+            rowData.add(value);
+        }
+
+        return rowData;
+    }
+
+    // Helper method to get column letter from index (0-based)
+    private String getColumnLetter(int index) {
+        StringBuilder columnName = new StringBuilder();
+
+        if (index <= 0) {
+            return "A";
+        }
+
+        while (index > 0) {
+            int remainder = (index - 1) % 26;
+            columnName.insert(0, (char) (remainder + 'A'));
+            index = (index - 1) / 26;
+        }
+        return columnName.toString();
     }
 }

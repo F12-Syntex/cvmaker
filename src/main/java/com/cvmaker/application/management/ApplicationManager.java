@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import com.cvmaker.service.ai.AiService;
 import com.cvmaker.service.ai.LLMModel;
@@ -15,7 +14,6 @@ public class ApplicationManager {
 
     private final DataStorage dataStorage;
     private final EmailAnalysisService emailAnalysisService;
-    private final ReportingService reportingService;
     private final DummyEmailService dummyEmailService;
     private GmailService gmailService;
     private GoogleSheetsService sheetsService; // Added Google Sheets service
@@ -28,69 +26,15 @@ public class ApplicationManager {
 
     private final LLMModel model = LLMModel.GPT_4_1_MINI;
 
-    // Add this as a new field in ApplicationManager class
-    private final JobApplicationResearchService researchService;
-
     // Update the constructor to initialize the research service
     public ApplicationManager() {
         this.dataStorage = new DataStorage();
-        this.reportingService = new ReportingService();
         this.dummyEmailService = new DummyEmailService();
         this.sheetsService = new GoogleSheetsService();
 
         // Initialize AI service
         AiService aiService = new AiService(model);
         this.emailAnalysisService = new EmailAnalysisService(aiService);
-
-        // Initialize the research service with the same AI service
-        this.researchService = new JobApplicationResearchService(aiService);
-    }
-
-// Add this new method to the ApplicationManager class
-    public void researchJobApplications(int maxCount) {
-        System.out.println("\n=== Researching Job Applications ===");
-
-        if (jobApplicationsDb.isEmpty()) {
-            System.out.println("No job applications found to research.");
-            return;
-        }
-
-        // Get job-related applications that haven't been researched yet
-        List<JobApplicationData> applicationsToResearch = jobApplicationsDb.values().stream()
-                .filter(JobApplicationData::isJobRelated)
-                .filter(app -> app.getCompanyName() != null && !app.getCompanyName().isEmpty())
-                .filter(app -> app.getExtractedInfo() == null || !app.getExtractedInfo().contains("RESEARCH:"))
-                .collect(Collectors.toList());
-
-        if (applicationsToResearch.isEmpty()) {
-            System.out.println("No new applications to research.");
-            return;
-        }
-
-        System.out.printf("Found %d applications that need research. Will process up to %d.\n",
-                applicationsToResearch.size(), maxCount);
-
-        // Process applications in batch
-        researchService.batchEnhanceApplications(applicationsToResearch, maxCount);
-
-        // Save the updated applications to the database
-        for (JobApplicationData app : applicationsToResearch) {
-            if (app.getExtractedInfo() != null && app.getExtractedInfo().contains("RESEARCH:")) {
-                // The application was researched, save it
-                dataStorage.saveJobApplicationData(app);
-
-                // Also update Google Sheets if enabled
-                if (updateGoogleSheets) {
-                    try {
-                        sheetsService.updateJobApplicationData(app);
-                    } catch (Exception e) {
-                        System.err.println("Failed to update Google Sheets with research data: " + e.getMessage());
-                    }
-                }
-            }
-        }
-
-        System.out.println("Research completed and applications updated.");
     }
 
     public void initialize(boolean useDummyEmails, boolean updateGoogleSheets) {
@@ -177,9 +121,6 @@ public class ApplicationManager {
                         jobData.getConfidenceScore() * 100);
             }
         }
-
-        reportingService.displayProcessingSummary(newlyProcessedEmails, newJobRelatedEmails,
-                ignoredEmails, skippedEmails, processedEmailIds.size(), jobApplicationsDb.size(), isFirstRun);
     }
 
     private void processRealEmails() {
@@ -219,9 +160,6 @@ public class ApplicationManager {
                 }
             }
 
-            reportingService.displayProcessingSummary(newlyProcessedEmails, newJobRelatedEmails,
-                    ignoredEmails, skippedEmails, processedEmailIds.size(), jobApplicationsDb.size(), isFirstRun);
-
         } catch (Exception e) {
             System.err.println("Error processing real emails: " + e.getMessage());
             e.printStackTrace();
@@ -239,22 +177,7 @@ public class ApplicationManager {
             newJobRelatedEmails.add(jobData);
             dataStorage.saveJobApplicationData(jobData);
             jobApplicationsDb.put(jobData.getEmailId(), jobData);
-            reportingService.displayJobApplicationData(jobData);
-
-            // // Update Google Sheets if enabled
-            // if (updateGoogleSheets) {
-            //     try {
-            //         sheetsService.updateJobApplicationData(jobData);
-            //         System.out.println("  ≡ƒÅï Updated job application in Google Sheets");
-            //     } catch (Exception e) {
-            //         System.err.println("  ✖ Failed to update Google Sheets: " + e.getMessage());
-            //     }
-            // }
         }
-    }
-
-    public void viewJobApplications() {
-        reportingService.displayExistingJobApplications(jobApplicationsDb);
     }
 
     public void syncAllApplicationsToGoogleSheets() {
@@ -400,19 +323,11 @@ public class ApplicationManager {
             // Process new job application emails
             manager.processJobApplicationEmails();
 
-            // Research job applications (limit to 5 to avoid excessive API calls)
-            manager.researchJobApplications(5);
-
             // Sync all applications to Google Sheets with intelligent consolidation
             manager.syncAllApplicationsToGoogleSheets();
 
             // Apply formatting to Google Sheet
             manager.formatGoogleSheet();
-
-            // Optional: Export to CSV as a backup
-            // manager.exportApplicationsToCSV("job_applications_export.csv");
-            // Optional: View applications in console
-            manager.viewJobApplications();
         } catch (Exception e) {
             e.printStackTrace();
         }

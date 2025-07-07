@@ -65,26 +65,29 @@ public class GmailService {
     }
 
     public Set<String> findUnprocessedEmails(Set<String> processedEmailIds) throws IOException {
-        // More comprehensive search queries
+        // Define date range: 07/07/2025 to 07/14/2025 (one week)
+        String dateRange = "after:2025/07/07 before:2025/07/15"; // end date is exclusive
+
+        // More comprehensive search queries with date range
         String[] searchQueries = {
             // Basic job application terms
-            "(\"application received\" OR \"thank you for applying\" OR \"application confirmation\") newer_than:7d",
+            "(\"application received\" OR \"thank you for applying\" OR \"application confirmation\") " + dateRange,
             // Interview related
-            "(interview OR \"schedule an interview\" OR \"interview invitation\" OR \"phone screen\") newer_than:7d",
+            "(interview OR \"schedule an interview\" OR \"interview invitation\" OR \"phone screen\") " + dateRange,
             // Status updates
-            "(\"application status\" OR \"hiring decision\" OR \"next steps\" OR \"moving forward\") newer_than:7d",
+            "(\"application status\" OR \"hiring decision\" OR \"next steps\" OR \"moving forward\") " + dateRange,
             // Rejections and offers
-            "(unfortunately OR \"not selected\" OR \"decided to move forward\" OR \"job offer\" OR \"pleased to offer\") newer_than:7d",
+            "(unfortunately OR \"not selected\" OR \"decided to move forward\" OR \"job offer\" OR \"pleased to offer\") " + dateRange,
             // Assessments and tests
-            "(\"coding assessment\" OR \"technical test\" OR \"complete the following\" OR assessment OR challenge) newer_than:7d",
+            "(\"coding assessment\" OR \"technical test\" OR \"complete the following\" OR assessment OR challenge) " + dateRange,
             // From common job-related senders
-            "from:(hr OR recruiting OR talent OR careers OR noreply OR no-reply) newer_than:7d",
+            "from:(hr OR recruiting OR talent OR careers OR noreply OR no-reply) " + dateRange,
             // Broader job-related terms
-            "(position OR role OR \"your application\" OR \"your interview\" OR \"your submission\" OR candidate) newer_than:7d",
+            "(position OR role OR \"your application\" OR \"your interview\" OR \"your submission\" OR candidate) " + dateRange,
             // Company-specific patterns
-            "(\"we received your\" OR \"thank you for your interest\" OR \"regarding your application\") newer_than:7d",
+            "(\"we received your\" OR \"thank you for your interest\" OR \"regarding your application\") " + dateRange,
             // Additional comprehensive search
-            "subject:(job OR position OR interview OR application OR offer OR rejected OR assessment) newer_than:7d",};
+            "subject:(job OR position OR interview OR application OR offer OR rejected OR assessment) " + dateRange,};
 
         Set<String> allMessageIds = new HashSet<>();
         int totalFound = 0;
