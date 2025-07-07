@@ -66,7 +66,9 @@ public class GmailService {
 
     public Set<String> findUnprocessedEmails(Set<String> processedEmailIds) throws IOException {
         // Define date range: 07/07/2025 to 07/14/2025 (one week)
-        String dateRange = "after:2025/07/07 before:2025/07/15"; // end date is exclusive
+        // String dateRange = "after:2025/07/07 before:2025/07/15"; // end date is exclusive
+
+        String dateRange = ""; // end date is exclusive
 
         // More comprehensive search queries with date range
         String[] searchQueries = {
@@ -160,15 +162,26 @@ public class GmailService {
     private String getMessageBody(MessagePart part) {
         StringBuilder body = new StringBuilder();
 
+        // Check if this part has a body with data
         if (part.getBody() != null && part.getBody().getData() != null) {
             byte[] data = Base64.getUrlDecoder().decode(part.getBody().getData());
             body.append(new String(data));
         }
 
+        // If this part has sub-parts, process them
         if (part.getParts() != null) {
             for (MessagePart subPart : part.getParts()) {
-                if ("text/plain".equals(subPart.getMimeType()) || "text/html".equals(subPart.getMimeType())) {
+                String mimeType = subPart.getMimeType();
+
+                // For multipart messages, recursively process all parts
+                if (mimeType.startsWith("multipart/")) {
                     body.append(getMessageBody(subPart));
+                } // For text parts, decode and append the content
+                else if (mimeType.equals("text/plain") || mimeType.equals("text/html")) {
+                    if (subPart.getBody() != null && subPart.getBody().getData() != null) {
+                        byte[] data = Base64.getUrlDecoder().decode(subPart.getBody().getData());
+                        body.append(new String(data));
+                    }
                 }
             }
         }

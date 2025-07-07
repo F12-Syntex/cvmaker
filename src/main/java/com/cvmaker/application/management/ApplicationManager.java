@@ -1,9 +1,6 @@
 package com.cvmaker.application.management;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -12,322 +9,203 @@ import com.cvmaker.service.ai.LLMModel;
 
 public class ApplicationManager {
 
+    // Constants
+    private static final LLMModel DEFAULT_MODEL = LLMModel.GPT_4_1_MINI;
+
+    // Core services
     private final DataStorage dataStorage;
     private final EmailAnalysisService emailAnalysisService;
-    private final DummyEmailService dummyEmailService;
-    private GmailService gmailService;
-    private GoogleSheetsService sheetsService; // Added Google Sheets service
+    private final GmailService gmailService;
+    private final GoogleSheetsService sheetsService;
 
+    // State tracking
     private Set<String> processedEmailIds;
     private Map<String, JobApplicationData> jobApplicationsDb;
-    private boolean useDummyData;
-    private boolean isFirstRun;
-    private boolean updateGoogleSheets; // Flag for Google Sheets updates
+    private boolean isGoogleSheetsEnabled;
 
-    private final LLMModel model = LLMModel.GPT_4_1_MINI;
-
-    // Update the constructor to initialize the research service
     public ApplicationManager() {
         this.dataStorage = new DataStorage();
-        this.dummyEmailService = new DummyEmailService();
+        this.gmailService = new GmailService();
         this.sheetsService = new GoogleSheetsService();
-
-        // Initialize AI service
-        AiService aiService = new AiService(model);
-        this.emailAnalysisService = new EmailAnalysisService(aiService);
+        this.emailAnalysisService = new EmailAnalysisService(new AiService(DEFAULT_MODEL));
     }
 
-    public void initialize(boolean useDummyEmails, boolean updateGoogleSheets) {
-        this.useDummyData = useDummyEmails;
-        this.updateGoogleSheets = updateGoogleSheets;
+    public void initialize() {
+        initializeServices();
+        loadData();
+        printInitializationStatus();
+    }
 
-        if (!useDummyData) {
-            try {
-                this.gmailService = new GmailService();
-                this.gmailService.initialize();
-            } catch (Exception e) {
-                System.err.println("Failed to initialize Gmail service: " + e.getMessage());
-                throw new RuntimeException(e);
-            }
+    private void initializeServices() {
+        try {
+            gmailService.initialize();
+            initializeGoogleSheets();
+        } catch (Exception e) {
+            handleInitializationError(e);
         }
+    }
 
-        if (updateGoogleSheets) {
-            try {
-                this.sheetsService.initialize();
-                this.sheetsService.initializeSpreadsheet();
-                System.out.println("Google Sheets service initialized successfully");
-            } catch (Exception e) {
-                System.err.println("Failed to initialize Google Sheets service: " + e.getMessage());
-                this.updateGoogleSheets = false;
-            }
+    private void initializeGoogleSheets() {
+        try {
+            sheetsService.initialize();
+            sheetsService.initializeSpreadsheet();
+            isGoogleSheetsEnabled = true;
+        } catch (Exception e) {
+            System.err.println("Google Sheets initialization failed: " + e.getMessage());
+            isGoogleSheetsEnabled = false;
         }
+    }
 
+    private void loadData() {
         dataStorage.loadSystemState();
         processedEmailIds = dataStorage.loadProcessedEmailIds();
         jobApplicationsDb = dataStorage.loadJobApplicationsDb();
+    }
 
+    private void printInitializationStatus() {
         System.out.println("=== Job Application Manager Initialized ===");
-        System.out.println("Using dummy data: " + useDummyData);
-        System.out.println("Updating Google Sheets: " + updateGoogleSheets);
-        System.out.println("Previously processed emails: " + processedEmailIds.size());
-        System.out.println("Job applications in database: " + jobApplicationsDb.size());
-        System.out.println("AI Service model: " + model);
-        System.out.println("\n≡ƒöä Will process past week's unprocessed emails");
+        System.out.println("Google Sheets enabled: " + isGoogleSheetsEnabled);
+        System.out.println("Processed emails count: " + processedEmailIds.size());
+        System.out.println("Applications in database: " + jobApplicationsDb.size());
+        System.out.println("AI Model: " + DEFAULT_MODEL);
     }
 
     public void processJobApplicationEmails() {
         System.out.println("\n=== Processing Job Application Emails ===");
 
-        if (useDummyData) {
-            processDummyEmails();
-        } else {
-            processRealEmails();
-        }
-
-        dataStorage.saveSystemState();
-    }
-
-    private void processDummyEmails() {
-        List<DummyEmailService.DummyEmail> dummyEmails = dummyEmailService.generateDummyEmails();
-        List<JobApplicationData> newlyProcessedEmails = new ArrayList<>();
-        List<JobApplicationData> newJobRelatedEmails = new ArrayList<>();
-        int ignoredEmails = 0;
-        int skippedEmails = 0;
-
-        int emailsToProcess = isFirstRun ? 20 : dummyEmails.size();
-        System.out.println("Processing up to " + emailsToProcess + " dummy emails...");
-
-        for (int i = 0; i < Math.min(emailsToProcess, dummyEmails.size()); i++) {
-            DummyEmailService.DummyEmail email = dummyEmails.get(i);
-
-            if (processedEmailIds.contains(email.getId())) {
-                skippedEmails++;
-                System.out.printf("  ΓÅ¡∩╕Å  SKIPPED: %s (already processed)\n",
-                        email.getSubject().substring(0, Math.min(50, email.getSubject().length())));
-                continue;
-            }
-
-            System.out.printf("\n≡ƒöì Processing email %d/%d: %s\n", i + 1, emailsToProcess, email.getSubject());
-
-            JobApplicationData jobData = emailAnalysisService.analyzeEmail(
-                    email.getId(), email.getSubject(), email.getFrom(), email.getDate(), email.getBody()
-            );
-
-            processEmailResult(jobData, newlyProcessedEmails, newJobRelatedEmails);
-
-            if (!jobData.isJobRelated()) {
-                ignoredEmails++;
-                System.out.printf("  Γ¥î IGNORED: Not job-related (confidence: %.1f%%)\n",
-                        jobData.getConfidenceScore() * 100);
-            }
-        }
-    }
-
-    private void processRealEmails() {
         try {
             Set<String> unprocessedEmails = gmailService.findUnprocessedEmails(processedEmailIds);
-            System.out.printf("Found %d unprocessed emails from the past week\n", unprocessedEmails.size());
+            System.out.printf("Found %d unprocessed emails\n", unprocessedEmails.size());
 
-            List<JobApplicationData> newlyProcessedEmails = new ArrayList<>();
-            List<JobApplicationData> newJobRelatedEmails = new ArrayList<>();
-            int ignoredEmails = 0;
-            int skippedEmails = 0;
-
-            for (String emailId : unprocessedEmails) {
-                try {
-                    GmailService.EmailData emailData = gmailService.getEmailContent(emailId);
-
-                    System.out.printf("\n≡ƒöì Processing: %s\n", emailData.getSubject());
-
-                    JobApplicationData jobData = emailAnalysisService.analyzeEmail(
-                            emailData.getId(), emailData.getSubject(), emailData.getFrom(),
-                            emailData.getDate(), emailData.getBody()
-                    );
-
-                    processEmailResult(jobData, newlyProcessedEmails, newJobRelatedEmails);
-
-                    if (!jobData.isJobRelated()) {
-                        ignoredEmails++;
-                        System.out.printf("  Γ¥î IGNORED: %s - Not job-related\n",
-                                jobData.getSubject().substring(0, Math.min(50, jobData.getSubject().length())));
-                    }
-
-                    // Small delay to be respectful to the API
-                    Thread.sleep(100);
-
-                } catch (Exception e) {
-                    System.err.printf("Error processing email %s: %s\n", emailId, e.getMessage());
-                }
-            }
+            processEmails(unprocessedEmails);
+            dataStorage.saveSystemState();
 
         } catch (Exception e) {
-            System.err.println("Error processing real emails: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("Email processing failed: " + e.getMessage());
         }
     }
 
-    private void processEmailResult(JobApplicationData jobData,
-            List<JobApplicationData> newlyProcessedEmails,
-            List<JobApplicationData> newJobRelatedEmails) {
-        dataStorage.saveProcessedEmailId(jobData.getEmailId());
+    private void processEmails(Set<String> emailIds) {
+        for (String emailId : emailIds) {
+            try {
+                GmailService.EmailData emailData = gmailService.getEmailContent(emailId);
+                processSingleEmail(emailData);
+                Thread.sleep(100); // Rate limiting
+            } catch (Exception e) {
+                System.err.printf("Failed to process email %s: %s\n", emailId, e.getMessage());
+            }
+        }
+    }
+
+    private void processSingleEmail(GmailService.EmailData emailData) {
+
+        JobApplicationData jobData = emailAnalysisService.analyzeEmail(
+                emailData.getId(),
+                emailData.getSubject(),
+                emailData.getFrom(),
+                emailData.getDate(),
+                emailData.getBody()
+        );
+
+        updateApplicationDatabase(jobData);
+    }
+
+    private void updateApplicationDatabase(JobApplicationData jobData) {
         processedEmailIds.add(jobData.getEmailId());
-        newlyProcessedEmails.add(jobData);
+        dataStorage.saveProcessedEmailId(jobData.getEmailId());
 
         if (jobData.isJobRelated()) {
-            newJobRelatedEmails.add(jobData);
-            dataStorage.saveJobApplicationData(jobData);
             jobApplicationsDb.put(jobData.getEmailId(), jobData);
+            dataStorage.saveJobApplicationData(jobData);
         }
     }
 
     public void syncAllApplicationsToGoogleSheets() {
-        if (!updateGoogleSheets) {
-            System.out.println("Google Sheets updating is not enabled");
-            return;
-        }
-
-        System.out.println("\n=== Syncing All Job Applications to Google Sheets ===");
-
-        // Group applications by company and keep only the latest/most important status for each
-        Map<String, JobApplicationData> consolidatedApplications = consolidateApplicationsByCompany();
-
-        if (consolidatedApplications.isEmpty()) {
-            System.out.println("No job-related applications to sync.");
+        if (!isGoogleSheetsEnabled) {
+            System.out.println("Google Sheets sync disabled");
             return;
         }
 
         try {
-            // Use the new bulk update method instead of individual updates
-            sheetsService.bulkUpdateAllApplications(consolidatedApplications);
-
-            System.out.printf("\nBulk sync complete. %d applications synchronized to Google Sheets.\n",
-                    consolidatedApplications.size());
+            Map<String, JobApplicationData> consolidated = consolidateApplicationsByCompany();
+            if (!consolidated.isEmpty()) {
+                sheetsService.bulkUpdateAllApplications(consolidated);
+                System.out.printf("Synced %d applications to Google Sheets\n", consolidated.size());
+            }
         } catch (Exception e) {
-            System.err.println("Failed to bulk sync applications: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("Google Sheets sync failed: " + e.getMessage());
         }
     }
 
-// New method to consolidate applications by company
     private Map<String, JobApplicationData> consolidateApplicationsByCompany() {
         Map<String, JobApplicationData> consolidated = new HashMap<>();
+        Map<String, Integer> statusPriority = getStatusPriorityMap();
 
-        // Status priority: higher number = higher priority
-        Map<String, Integer> statusPriority = Map.of(
+        for (JobApplicationData jobData : jobApplicationsDb.values()) {
+            if (!isValidJobApplication(jobData)) {
+                continue;
+            }
+
+            String companyKey = jobData.getCompanyName().trim().toLowerCase();
+            updateConsolidatedApplications(consolidated, companyKey, jobData, statusPriority);
+        }
+
+        return consolidated;
+    }
+
+    // Adds or updates the consolidated map with the job application with the highest status priority
+    private void updateConsolidatedApplications(
+            Map<String, JobApplicationData> consolidated,
+            String companyKey,
+            JobApplicationData jobData,
+            Map<String, Integer> statusPriority) {
+
+        JobApplicationData existing = consolidated.get(companyKey);
+        if (existing == null) {
+            consolidated.put(companyKey, jobData);
+        } else {
+            int existingPriority = statusPriority.getOrDefault(existing.getApplicationStatus(), 0);
+            int newPriority = statusPriority.getOrDefault(jobData.getApplicationStatus(), 0);
+            if (newPriority > existingPriority) {
+                consolidated.put(companyKey, jobData);
+            }
+        }
+    }
+
+    private boolean isValidJobApplication(JobApplicationData jobData) {
+        return jobData.isJobRelated() && jobData.getCompanyName() != null;
+    }
+
+    private Map<String, Integer> getStatusPriorityMap() {
+        return Map.of(
                 "Rejected", 5,
                 "Offer", 4,
                 "Interview", 3,
                 "Assessment", 2,
                 "Applied", 1
         );
-
-        for (JobApplicationData jobData : jobApplicationsDb.values()) {
-            if (!jobData.isJobRelated() || jobData.getCompanyName() == null) {
-                continue;
-            }
-
-            String companyKey = jobData.getCompanyName().trim().toLowerCase();
-            JobApplicationData existing = consolidated.get(companyKey);
-
-            if (existing == null) {
-                // First entry for this company
-                consolidated.put(companyKey, jobData);
-            } else {
-                // Compare and keep the higher priority status
-                String existingStatus = existing.getApplicationStatus() != null ? existing.getApplicationStatus() : "Applied";
-                String newStatus = jobData.getApplicationStatus() != null ? jobData.getApplicationStatus() : "Applied";
-
-                int existingPriority = getStatusPriority(existingStatus, statusPriority);
-                int newPriority = getStatusPriority(newStatus, statusPriority);
-
-                if (newPriority > existingPriority) {
-                    // New status has higher priority, replace
-                    consolidated.put(companyKey, jobData);
-                } else if (newPriority == existingPriority) {
-                    // Same priority, keep the more recent one
-                    try {
-                        LocalDateTime existingTime = LocalDateTime.parse(existing.getProcessedTimestamp());
-                        LocalDateTime newTime = LocalDateTime.parse(jobData.getProcessedTimestamp());
-                        if (newTime.isAfter(existingTime)) {
-                            consolidated.put(companyKey, jobData);
-                        }
-                    } catch (Exception e) {
-                        // If timestamp parsing fails, keep the existing one
-                    }
-                }
-                // If existing has higher priority, keep it (do nothing)
-            }
-        }
-
-        return consolidated;
-    }
-
-// Helper method to get status priority
-    private int getStatusPriority(String status, Map<String, Integer> statusPriority) {
-        for (Map.Entry<String, Integer> entry : statusPriority.entrySet()) {
-            if (status.toLowerCase().contains(entry.getKey().toLowerCase())) {
-                return entry.getValue();
-            }
-        }
-        return 1; // Default to lowest priority (Applied)
-    }
-
-    public void formatGoogleSheet() {
-        if (updateGoogleSheets) {
-            try {
-                // sheetsService.formatSpreadsheet();
-                System.out.println("Google Sheets formatting applied successfully");
-            } catch (Exception e) {
-                System.err.println("Failed to format Google Sheets: " + e.getMessage());
-            }
-        } else {
-            System.out.println("Google Sheets updating is not enabled");
-        }
     }
 
     public void exportApplicationsToCSV(String filePath) {
         try {
             int count = dataStorage.exportJobApplicationsToCSV(jobApplicationsDb, filePath);
-            System.out.printf("Exported %d job applications to %s\n", count, filePath);
+            System.out.printf("Exported %d applications to %s\n", count, filePath);
         } catch (Exception e) {
-            System.err.println("Failed to export applications to CSV: " + e.getMessage());
+            System.err.println("CSV export failed: " + e.getMessage());
         }
     }
 
-    // Method to update existing applications based on new emails
-    public void updateExistingApplications() {
-        if (!updateGoogleSheets) {
-            System.out.println("Google Sheets updating is not enabled");
-            return;
-        }
-
-        System.out.println("\n=== Updating Existing Applications ===");
-
-        // This would involve more complex logic to match new emails with existing applications
-        // For example, looking for follow-ups on the same thread or emails with similar subjects
-        // For now, just a placeholder
-        System.out.println("This feature is not yet implemented");
+    private void handleInitializationError(Exception e) {
+        System.err.println("Initialization failed: " + e.getMessage());
+        isGoogleSheetsEnabled = false;
     }
 
     public static void main(String[] args) {
         ApplicationManager manager = new ApplicationManager();
-
         try {
-            // Initialize with real Gmail data (false) or dummy data (true)
-            // Second parameter controls Google Sheets integration
-            boolean useDummyData = false;
-            boolean updateGoogleSheets = true;
-
-            manager.initialize(useDummyData, updateGoogleSheets);
-
-            // Process new job application emails
+            manager.initialize();
             manager.processJobApplicationEmails();
-
-            // Sync all applications to Google Sheets with intelligent consolidation
             manager.syncAllApplicationsToGoogleSheets();
-
-            // Apply formatting to Google Sheet
-            manager.formatGoogleSheet();
         } catch (Exception e) {
             e.printStackTrace();
         }
