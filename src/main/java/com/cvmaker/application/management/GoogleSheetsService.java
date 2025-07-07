@@ -383,7 +383,20 @@ public class GoogleSheetsService {
     private String combineNotes(JobApplicationData jobData) {
         StringBuilder notes = new StringBuilder();
 
+        // If status is Rejected, prominently show the rejection reason at the beginning
+        if (jobData.getApplicationStatus() != null
+                && jobData.getApplicationStatus().trim().equalsIgnoreCase("Rejected")
+                && jobData.getRejectionReason() != null
+                && !jobData.getRejectionReason().trim().isEmpty()) {
+
+            notes.append("❌ REJECTED: ").append(jobData.getRejectionReason().trim());
+        }
+
+        // Add the rest of the extracted info
         if (jobData.getExtractedInfo() != null && !jobData.getExtractedInfo().trim().isEmpty()) {
+            if (notes.length() > 0) {
+                notes.append(" | ");
+            }
             notes.append(jobData.getExtractedInfo().trim());
         }
 
@@ -409,7 +422,12 @@ public class GoogleSheetsService {
             notes.append("➡️ ").append(jobData.getNextSteps().trim());
         }
 
-        if (jobData.getRejectionReason() != null && !jobData.getRejectionReason().trim().isEmpty()) {
+        // Only add rejection reason here if it wasn't already added at the beginning
+        if (!(jobData.getApplicationStatus() != null
+                && jobData.getApplicationStatus().trim().equalsIgnoreCase("Rejected"))
+                && jobData.getRejectionReason() != null
+                && !jobData.getRejectionReason().trim().isEmpty()) {
+
             if (notes.length() > 0) {
                 notes.append(" | ");
             }
