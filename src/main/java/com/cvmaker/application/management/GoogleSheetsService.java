@@ -5,12 +5,15 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import com.google.api.client.auth.oauth2.Credential;
@@ -63,9 +66,9 @@ public class GoogleSheetsService {
             new ColumnMetadata("Email Link", 80, true, "emailLink", ColumnType.HYPERLINK),
             new ColumnMetadata("Application URL", 80, true, "applicationUrl", ColumnType.HYPERLINK),
             new ColumnMetadata("Notes", 350, true, "extractedInfo", ColumnType.NOTES),
-            new ColumnMetadata("Contact Email", 150, true, "contactEmail", ColumnType.TEXT),
-
+            
             // HIDDEN COLUMNS (K-U) - for data storage
+            new ColumnMetadata("Contact Email", 150, false, "contactEmail", ColumnType.TEXT),
             new ColumnMetadata("Work Location", 130, false, "workLocation", ColumnType.TEXT),
             new ColumnMetadata("Interview Date", 120, false, "interviewDate", ColumnType.DATE),
             new ColumnMetadata("Work Type", 100, false, "workType", ColumnType.TEXT),
@@ -77,7 +80,8 @@ public class GoogleSheetsService {
             new ColumnMetadata("Skills", 200, false, "requiredSkills", ColumnType.TEXT),
             new ColumnMetadata("Rejection Reason", 200, false, "rejectionReason", ColumnType.TEXT),
             new ColumnMetadata("Offer Details", 200, false, "offerDetails", ColumnType.TEXT),
-            new ColumnMetadata("Last Updated", 150, false, "lastUpdated", ColumnType.TIMESTAMP)
+            new ColumnMetadata("Last Updated", 150, false, "lastUpdated", ColumnType.TIMESTAMP),
+            new ColumnMetadata("Email Timestamp", 150, false, "emailTimestamp", ColumnType.TIMESTAMP)
     );
 
     // Enum to define column types for specific formatting/handling
@@ -169,23 +173,36 @@ public class GoogleSheetsService {
         }
     }
 
-    // Modified bulkUpdateAllApplications to use column metadata
+    // Modified bulkUpdateAllApplications to ensure only latest updates are shown
     public void bulkUpdateAllApplications(Map<String, JobApplicationData> consolidatedApplications) throws IOException {
         System.out.println("Starting bulk update of " + consolidatedApplications.size() + " applications...");
 
         // Clear existing data (keeping headers)
         clearExistingData();
 
-        // Prepare all data rows
+        // Get the most recent application per company
+        Map<String, JobApplicationData> latestApplications = new HashMap<>();
+        
+        for (JobApplicationData jobData : consolidatedApplications.values()) {
+            if (jobData.isJobRelated()) {
+                String companyKey = jobData.getCompanyName().trim().toLowerCase();
+                
+                // If we don't have this company yet, or this email is newer than what we have
+                if (!latestApplications.containsKey(companyKey) || 
+                    isNewerApplication(jobData, latestApplications.get(companyKey))) {
+                    latestApplications.put(companyKey, jobData);
+                }
+            }
+        }
+
+        // Prepare data rows from the filtered map
         List<List<Object>> allRows = new ArrayList<>();
         List<JobApplicationData> applicationsWithUrls = new ArrayList<>();
 
-        for (JobApplicationData jobData : consolidatedApplications.values()) {
-            if (jobData.isJobRelated()) {
-                List<Object> rowData = createRowData(jobData);
-                allRows.add(rowData);
-                applicationsWithUrls.add(jobData);
-            }
+        for (JobApplicationData jobData : latestApplications.values()) {
+            List<Object> rowData = createRowData(jobData);
+            allRows.add(rowData);
+            applicationsWithUrls.add(jobData);
         }
 
         if (allRows.isEmpty()) {
@@ -295,7 +312,7 @@ public class GoogleSheetsService {
         }
     }
 
-    // Update updateJobApplicationData to use column metadata
+    // Updated to ensure only the latest application data is shown/updated
     public void updateJobApplicationData(JobApplicationData jobData) throws IOException {
         List<List<Object>> existingData = getExistingData();
 
@@ -304,7 +321,7 @@ public class GoogleSheetsService {
         // Find existing entries for this company
         List<Integer> companyRowIndices = new ArrayList<>();
         int latestRowIndex = -1;
-        LocalDateTime latestDate = null;
+        JobApplicationData latestJobData = null;
 
         for (int i = 0; i < existingData.size(); i++) {
             List<Object> row = existingData.get(i);
@@ -315,30 +332,22 @@ public class GoogleSheetsService {
                     int actualRowIndex = i + 2;
                     companyRowIndices.add(actualRowIndex);
 
-                    try {
-                        // Find index of lastUpdated column
-                        int lastUpdatedIndex = -1;
-                        for (int j = 0; j < COLUMNS.size(); j++) {
-                            if (COLUMNS.get(j).getFieldName().equals("lastUpdated")) {
-                                lastUpdatedIndex = j;
-                                break;
-                            }
-                        }
-
-                        if (lastUpdatedIndex >= 0 && row.size() > lastUpdatedIndex && row.get(lastUpdatedIndex) != null) {
-                            LocalDateTime entryDate = LocalDateTime.parse(row.get(lastUpdatedIndex).toString());
-                            if (latestDate == null || entryDate.isAfter(latestDate)) {
-                                latestDate = entryDate;
-                                latestRowIndex = actualRowIndex;
-                            }
-                        }
-                    } catch (DateTimeParseException e) {
-                        if (latestRowIndex == -1) {
-                            latestRowIndex = actualRowIndex;
-                        }
+                    // Extract the job data from this row to compare timestamps
+                    JobApplicationData existingJobData = extractJobDataFromRow(row);
+                    
+                    if (latestJobData == null || isNewerApplication(existingJobData, latestJobData)) {
+                        latestJobData = existingJobData;
+                        latestRowIndex = actualRowIndex;
                     }
                 }
             }
+        }
+
+        // Now compare if the new job data is newer than what's already in the sheet
+        if (latestJobData != null && !isNewerApplication(jobData, latestJobData)) {
+            System.out.println("Skipping update for " + jobData.getCompanyName() + 
+                    " as we already have a newer entry in the spreadsheet.");
+            return;
         }
 
         // Create row data using the metadata
@@ -378,6 +387,168 @@ public class GoogleSheetsService {
 
             System.out.println("Updated application: " + jobData.getCompanyName() + " - " + jobData.getPositionTitle() + " (" + jobData.getApplicationStatus() + ")");
         }
+    }
+
+    // Helper method to determine which application is newer
+    private boolean isNewerApplication(JobApplicationData newApp, JobApplicationData existingApp) {
+        // First try to compare emailTimestamp
+        if (newApp.getEmailTimestamp() != null && existingApp.getEmailTimestamp() != null) {
+            try {
+                LocalDateTime newTime = LocalDateTime.parse(newApp.getEmailTimestamp());
+                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getEmailTimestamp());
+                return newTime.isAfter(existingTime);
+            } catch (DateTimeParseException e) {
+                // Fall through to next comparison method
+            }
+        }
+        
+        // Then try to compare lastUpdated
+        if (newApp.getLastUpdated() != null && existingApp.getLastUpdated() != null) {
+            try {
+                LocalDateTime newTime = LocalDateTime.parse(newApp.getLastUpdated());
+                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getLastUpdated());
+                return newTime.isAfter(existingTime);
+            } catch (DateTimeParseException e) {
+                // Fall through to next comparison method
+            }
+        }
+        
+        // Then try to compare processedTimestamp
+        if (newApp.getProcessedTimestamp() != null && existingApp.getProcessedTimestamp() != null) {
+            try {
+                LocalDateTime newTime = LocalDateTime.parse(newApp.getProcessedTimestamp());
+                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getProcessedTimestamp());
+                return newTime.isAfter(existingTime);
+            } catch (DateTimeParseException e) {
+                // Fall through to next comparison method
+            }
+        }
+        
+        // Finally, if all else fails, try to compare the application date
+        if (newApp.getDate() != null && existingApp.getDate() != null) {
+            try {
+                // Use your formatDateToHumanReadable logic to parse various date formats
+                LocalDate newDate = parseAnyDateFormat(newApp.getDate());
+                LocalDate existingDate = parseAnyDateFormat(existingApp.getDate());
+                if (newDate != null && existingDate != null) {
+                    return newDate.isAfter(existingDate);
+                }
+            } catch (Exception e) {
+                // Ignore parsing errors
+            }
+        }
+        
+        // If we can't determine which is newer, prefer the one with a "more advanced" status
+        return isMoreAdvancedStatus(newApp.getApplicationStatus(), existingApp.getApplicationStatus());
+    }
+
+    // Helper method to parse dates in various formats
+    private LocalDate parseAnyDateFormat(String dateString) {
+        if (dateString == null || dateString.trim().isEmpty()) {
+            return null;
+        }
+        
+        DateTimeFormatter[] formatters = {
+            DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+            DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+            DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH)
+        };
+        
+        for (DateTimeFormatter formatter : formatters) {
+            try {
+                return LocalDate.parse(dateString, formatter);
+            } catch (DateTimeParseException e) {
+                // Try next formatter
+            }
+        }
+        
+        return null;
+    }
+
+    // Helper method to determine if a status is "more advanced" in the application process
+    private boolean isMoreAdvancedStatus(String newStatus, String existingStatus) {
+        if (newStatus == null) return false;
+        if (existingStatus == null) return true;
+        
+        // Define a hierarchy of statuses (higher index = more advanced)
+        Map<String, Integer> statusRanking = new HashMap<>();
+        statusRanking.put("applied", 0);
+        statusRanking.put("received", 1);
+        statusRanking.put("screening", 2);
+        statusRanking.put("interview", 3);
+        statusRanking.put("interview scheduled", 3);
+        statusRanking.put("assessment", 4);
+        statusRanking.put("final interview", 5);
+        statusRanking.put("offered", 6);
+        statusRanking.put("accepted", 7);
+        statusRanking.put("rejected", -1);  // Special case, not more advanced
+        
+        String newStatusLower = newStatus.toLowerCase();
+        String existingStatusLower = existingStatus.toLowerCase();
+        
+        Integer newRank = null;
+        Integer existingRank = null;
+        
+        // Find the best match for each status
+        for (Map.Entry<String, Integer> entry : statusRanking.entrySet()) {
+            if (newStatusLower.contains(entry.getKey())) {
+                if (newRank == null || entry.getValue() > newRank) {
+                    newRank = entry.getValue();
+                }
+            }
+            if (existingStatusLower.contains(entry.getKey())) {
+                if (existingRank == null || entry.getValue() > existingRank) {
+                    existingRank = entry.getValue();
+                }
+            }
+        }
+        
+        // If we couldn't match the status to our known rankings, fall back to string comparison
+        if (newRank == null || existingRank == null) {
+            return true; // Default to considering the new status more advanced
+        }
+        
+        return newRank > existingRank;
+    }
+
+    // Helper method to extract JobApplicationData from a spreadsheet row
+    private JobApplicationData extractJobDataFromRow(List<Object> row) {
+        JobApplicationData data = new JobApplicationData();
+        
+        for (int i = 0; i < Math.min(row.size(), COLUMNS.size()); i++) {
+            if (row.get(i) != null) {
+                String value = row.get(i).toString();
+                String fieldName = COLUMNS.get(i).getFieldName();
+                
+                switch (fieldName) {
+                    case "companyName": data.setCompanyName(value); break;
+                    case "positionTitle": data.setPositionTitle(value); break;
+                    case "date": data.setDate(value); break;
+                    case "applicationStatus": data.setApplicationStatus(value); break;
+                    case "provider": data.setProvider(value); break;
+                    case "workLocation": data.setWorkLocation(value); break;
+                    case "interviewDate": data.setInterviewDate(value); break;
+                    case "extractedInfo": data.setExtractedInfo(value); break;
+                    case "workType": data.setWorkType(value); break;
+                    case "salaryRange": data.setSalaryRange(value); break;
+                    case "contactPerson": data.setContactPerson(value); break;
+                    case "nextSteps": data.setNextSteps(value); break;
+                    case "emailId": data.setEmailId(value); break;
+                    case "contactEmail": data.setContactEmail(value); break;
+                    case "applicationDeadline": data.setApplicationDeadline(value); break;
+                    case "requiredSkills": data.setRequiredSkills(value); break;
+                    case "rejectionReason": data.setRejectionReason(value); break;
+                    case "offerDetails": data.setOfferDetails(value); break;
+                    case "lastUpdated": data.setLastUpdated(value); break;
+                    case "emailTimestamp": data.setEmailTimestamp(value); break;
+                }
+            }
+        }
+        
+        return data;
     }
 
     private void addHyperlinks(int rowIndex, JobApplicationData jobData) throws IOException {
@@ -625,6 +796,96 @@ public class GoogleSheetsService {
         }
     }
 
+    private LocalDateTime parseEmailDate(String dateString) {
+        if (dateString == null || dateString.trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            // Handle standard email date formats
+            if (dateString.contains("(UTC)") || dateString.contains("+0000")) {
+                DateTimeFormatter emailFormatter = DateTimeFormatter.ofPattern(
+                        "EEE, d MMM yyyy HH:mm:ss Z '(UTC)'", Locale.ENGLISH);
+                try {
+                    ZonedDateTime zonedDateTime = ZonedDateTime.parse(dateString, emailFormatter);
+                    return zonedDateTime.toLocalDateTime();
+                } catch (DateTimeParseException e) {
+                    DateTimeFormatter emailFormatter2 = DateTimeFormatter.ofPattern(
+                            "EEE, d MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
+                    try {
+                        ZonedDateTime zonedDateTime = ZonedDateTime.parse(dateString, emailFormatter2);
+                        return zonedDateTime.toLocalDateTime();
+                    } catch (DateTimeParseException e2) {
+                        // Continue to other parsing methods
+                    }
+                }
+            }
+
+            // Try parsing as ISO format
+            try {
+                return LocalDateTime.parse(dateString);
+            } catch (DateTimeParseException e) {
+                // Try next format
+            }
+
+            // Try parsing as LocalDate and convert to LocalDateTime
+            try {
+                LocalDate date = LocalDate.parse(dateString);
+                return date.atStartOfDay();
+            } catch (DateTimeParseException e) {
+                // Try next format
+            }
+
+            // Try various date formats
+            DateTimeFormatter[] formatters = {
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+                DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH),
+                DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
+            };
+
+            for (DateTimeFormatter formatter : formatters) {
+                try {
+                    // Try to parse as LocalDateTime first
+                    return LocalDateTime.parse(dateString, formatter);
+                } catch (DateTimeParseException e) {
+                    try {
+                        // If that fails, try as LocalDate and convert
+                        LocalDate date = LocalDate.parse(dateString, formatter);
+                        return date.atStartOfDay();
+                    } catch (DateTimeParseException e2) {
+                        // Try next formatter
+                    }
+                }
+            }
+
+            // Manual extraction for complex email date formats
+            try {
+                String[] parts = dateString.split(" ");
+                if (parts.length >= 4) {
+                    String day = parts[1].replace(",", "");
+                    String month = parts[2];
+                    String year = parts[3];
+
+                    String simpleDateString = day + " " + month + " " + year;
+                    DateTimeFormatter simpleFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
+                    LocalDate parsedDate = LocalDate.parse(simpleDateString, simpleFormatter);
+                    return parsedDate.atStartOfDay();
+                }
+            } catch (Exception ignored) {
+                // Fall through
+            }
+        } catch (Exception e) {
+            // Fall through
+        }
+
+        // If all parsing attempts fail, return current time
+        return LocalDateTime.now();
+    }
+
     // Modified setupEnhancedSpreadsheetHeaders to use column metadata
     private void setupEnhancedSpreadsheetHeaders() throws IOException {
         // Generate header values from column metadata
@@ -850,6 +1111,10 @@ public class GoogleSheetsService {
                     break;
                 case "lastUpdated":
                     value = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                    break;
+                case "emailTimestamp":
+                    value = jobData.getEmailTimestamp() != null ? jobData.getEmailTimestamp() : 
+                            LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
                     break;
             }
 

@@ -155,7 +155,7 @@ public class ApplicationManager {
 
     // Adds or updates the consolidated map with the job application with the highest status priority
     private void updateConsolidatedApplications(
-            Map<String, JobApplicationData> consolidated,
+        Map<String, JobApplicationData> consolidated,
             String companyKey,
             JobApplicationData jobData,
             Map<String, Integer> statusPriority) {

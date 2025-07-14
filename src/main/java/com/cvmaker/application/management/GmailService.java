@@ -69,7 +69,6 @@ public class GmailService {
         // String dateRange = "after:2025/07/07 before:2025/07/15"; // end date is exclusive
 
         String dateRange = ""; // end date is exclusive
-
         // More comprehensive search queries with date range
         String[] searchQueries = {
             // Basic job application terms

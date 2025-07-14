@@ -21,6 +21,7 @@ public class JobApplicationData {
     private String processedTimestamp;
     private String applicationUrl;
     
+    
     // New fields for enhanced information
     private String emailLink;
     private String provider; // LinkedIn, Indeed, company website, etc.
@@ -34,6 +35,8 @@ public class JobApplicationData {
     private String requiredSkills;
     private String rejectionReason;
     private String offerDetails;
+    private String lastUpdated;
+    private String emailTimestamp; // Added for email chronology tracking
 
     // Constructors
     public JobApplicationData() {
@@ -45,6 +48,7 @@ public class JobApplicationData {
         this.fromEmail = fromEmail;
         this.date = date;
         this.processedTimestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        this.emailTimestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         this.emailLink = generateGmailLink(emailId);
     }
 
@@ -140,6 +144,12 @@ public class JobApplicationData {
 
     public String getOfferDetails() { return offerDetails; }
     public void setOfferDetails(String offerDetails) { this.offerDetails = offerDetails; }
+    
+    public String getLastUpdated() { return lastUpdated; }
+    public void setLastUpdated(String lastUpdated) { this.lastUpdated = lastUpdated; }
+    
+    public String getEmailTimestamp() { return emailTimestamp; }
+    public void setEmailTimestamp(String emailTimestamp) { this.emailTimestamp = emailTimestamp; }
 
     public String serialize() {
         return String.join("||",
@@ -169,7 +179,9 @@ public class JobApplicationData {
                 applicationDeadline != null ? applicationDeadline : "",
                 requiredSkills != null ? requiredSkills : "",
                 rejectionReason != null ? rejectionReason : "",
-                offerDetails != null ? offerDetails : ""
+                offerDetails != null ? offerDetails : "",
+                lastUpdated != null ? lastUpdated : "",
+                emailTimestamp != null ? emailTimestamp : ""
         );
     }
 
@@ -223,6 +235,8 @@ public class JobApplicationData {
         if (parts.length > 24) data.setRequiredSkills(parts[24].isEmpty() ? null : parts[24]);
         if (parts.length > 25) data.setRejectionReason(parts[25].isEmpty() ? null : parts[25]);
         if (parts.length > 26) data.setOfferDetails(parts[26].isEmpty() ? null : parts[26]);
+        if (parts.length > 27) data.setLastUpdated(parts[27].isEmpty() ? null : parts[27]);
+        if (parts.length > 28) data.setEmailTimestamp(parts[28].isEmpty() ? null : parts[28]);
 
         return data;
     }

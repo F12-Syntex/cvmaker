@@ -652,33 +652,79 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private void handleConfirmationDialog() {
         try {
-            // Adjusted confirmation dialog wait time
+            // Wait longer for initial dialog appearance
             page.waitForTimeout(adjustedDelay(crawlerConfig.getConfirmationDialogDelay()));
             visualizer.visualizeAction("Checking for confirmation dialog");
 
             String[] okSelectors = crawlerConfig.getConfirmationSelectors().split(",");
+            boolean dialogHandled = false;
 
             for (String selector : okSelectors) {
                 try {
                     visualizer.highlightElements(selector);
                     Locator okButton = page.locator(selector.trim()).first();
-                    if (okButton.isVisible()) {
+
+                    // Wait explicitly for the button to be visible and enabled
+                    try {
+                        okButton.waitFor(new Locator.WaitForOptions()
+                                .setState(WaitForSelectorState.VISIBLE)
+                                .setTimeout(5000));
+                    } catch (Exception e) {
+                        continue;
+                    }
+
+                    if (okButton.isVisible() && okButton.isEnabled()) {
                         System.out.println("Found confirmation dialog, clicking OK...");
                         visualizer.visualizeAction("Clicking OK on confirmation dialog");
-                        okButton.click();
-                        // Adjusted interaction delay
-                        page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
-                        return;
+
+                        // Ensure button is in view
+                        okButton.scrollIntoViewIfNeeded();
+
+                        // Add a small pause before clicking
+                        page.waitForTimeout(500);
+
+                        // Try multiple click attempts if needed
+                        for (int attempt = 0; attempt < 3; attempt++) {
+                            try {
+                                okButton.click(new Locator.ClickOptions()
+                                        .setForce(true) // Force the click
+                                        .setTimeout(5000));  // Wait up to 5 seconds for click
+                                dialogHandled = true;
+                                break;
+                            } catch (Exception e) {
+                                page.waitForTimeout(500);
+                            }
+                        }
+
+                        if (dialogHandled) {
+                            // Wait to ensure dialog closes
+                            page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
+                            return;
+                        }
                     }
                 } catch (Exception e) {
                     continue;
                 }
             }
 
-            if (crawlerConfig.isDebugMode()) {
-                System.out.println("No confirmation dialog found");
+            if (!dialogHandled) {
+                // Try JavaScript click as fallback
+                for (String selector : okSelectors) {
+                    try {
+                        page.evaluate("document.querySelector('" + selector + "').click();");
+                        System.out.println("Clicked confirmation dialog using JavaScript");
+                        page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
+                        return;
+                    } catch (Exception e) {
+                        continue;
+                    }
+                }
             }
-            visualizer.visualizeAction("No confirmation dialog found");
+
+            if (crawlerConfig.isDebugMode()) {
+                System.out.println("No confirmation dialog found or failed to click");
+            }
+            visualizer.visualizeAction("No confirmation dialog found or click failed");
 
         } catch (Exception e) {
             System.out.println("Error handling confirmation dialog: " + e.getMessage());
