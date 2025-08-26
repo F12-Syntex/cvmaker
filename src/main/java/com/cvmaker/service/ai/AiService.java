@@ -30,7 +30,7 @@ public class AiService {
     }
 
     public AiService(LLMProvider provider) {
-        this.model = LLMModel.GPT_4_1_MINI;
+        this.model = LLMModel.GPT_5_1_MINI;
         this.llmClient = LLMClientFactory.createClient(this.model);
         this.temperature = 0.3;
         this.executorService = Executors.newSingleThreadExecutor();

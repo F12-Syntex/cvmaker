@@ -16,6 +16,24 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private PageVisualizer visualizer;
 
+    // Site settings
+    private static final String SEARCH_INPUT_SELECTOR = "input[name='keywords']";
+
+    // Job search selectors
+    private static final String JOB_CARDS_SELECTOR = ".job-card_jobCard__MkcJD,[class*='job-card_jobCard'],.job-result,.card.job-card,.job-card,article[data-qa='job-result'],[data-qa*='job'],.job-result-card";
+    private static final String JOB_DESCRIPTION_SELECTOR = "article.card.job-card_jobCard__MkcJD,article[class*='job-card_jobCard'],[class*='job-card_jobCard__MkcJD'],article.card";
+    private static final String EASY_APPLY_SELECTOR = "button:has-text('Easy Apply'),a:has-text('Easy Apply'),[data-qa*='easy-apply'],[class*='easy-apply'],button:has-text('Quick Apply'),a:has-text('Quick Apply'),[data-qa*='quick-apply'],[class*='quick-apply'],.easy-apply,.quick-apply,button[class*='Easy'],a[class*='Easy']";
+    private static final String EASY_APPLY_KEYWORDS = "easy apply,quick apply";
+
+    // Application process selectors
+    private static final String APPLY_BUTTON_SELECTOR = "button:has-text('Apply Now'),a:has-text('Apply Now'),button:has-text('Apply'),a:has-text('Apply'),[data-qa*='apply'],button[class*='apply'],a[class*='apply'],.apply-button,.btn-apply";
+    private static final String UPDATE_BUTTON_SELECTOR = "button:has-text('Update'),a:has-text('Update'),[data-qa*='update'],button[class*='update'],.update-button";
+    private static final String CV_UPLOAD_SELECTOR = "button:has-text('Choose your own CV file'),a:has-text('Choose your own CV file'),button:has-text('Choose CV'),button:has-text('Upload CV'),[data-qa*='upload-cv'],[data-qa*='choose-cv'],button[class*='cv-upload'],input[type='file'][accept*='pdf'],label[for*='cv'],.cv-upload-button";
+    private static final String FILE_INPUT_SELECTOR = "input[type='file'],input[accept*='pdf'],input[name*='cv'],input[id*='cv'],input[class*='cv']";
+    private static final String PROCESSING_SELECTOR = ":has-text('CV processing'),:has-text('Processing'),:has-text('Uploading'),.spinner,.loading,[class*='processing']";
+    private static final String SUBMIT_BUTTON_SELECTOR = "button:has-text('Submit Application'),button:has-text('Submit'),a:has-text('Submit Application'),a:has-text('Submit'),[data-qa*='submit'],button[class*='submit'],.submit-button,.btn-submit";
+    private static final String CONFIRMATION_SELECTOR = "button:has-text('OK'),button:has-text('Ok'),button:has-text('Confirm'),button:has-text('Yes'),[data-qa*='confirm'],.modal button:has-text('OK'),.dialog button:has-text('OK')";
+
     public ReedCrawler() throws Exception {
         super();
     }
@@ -33,7 +51,6 @@ public class ReedCrawler extends AbstractJobCrawler {
     public void initialize() throws Exception {
         super.initialize();
 
-        // Enable visualization mode if configured
         if (crawlerConfig.isVisualizationEnabled()) {
             System.out.println("Visualization mode enabled - you will see highlighted elements during operation");
         }
@@ -42,26 +59,20 @@ public class ReedCrawler extends AbstractJobCrawler {
     @Override
     public void setupBrowser() {
         super.setupBrowser();
-
-        // Initialize the visualizer after browser is set up
         this.visualizer = new PageVisualizer(page, crawlerConfig.isVisualizationEnabled());
     }
 
     @Override
     public void processJobsAndApply() {
         try {
-            // Navigate to job search
             visualizer.visualizeAction("Navigating to " + crawlerConfig.getBaseUrl());
             page.navigate(crawlerConfig.getBaseUrl());
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
 
-            // Perform search
             boolean searchSuccess = performJobSearch();
 
-            // Check if search failed due to login requirements
             if (!searchSuccess) {
                 if (handleLoginIfRequired()) {
-                    // Retry search after login
                     searchSuccess = performJobSearch();
                     if (!searchSuccess) {
                         System.out.println("Search failed even after login attempt. Exiting.");
@@ -77,7 +88,6 @@ public class ReedCrawler extends AbstractJobCrawler {
             System.out.println("Maximum applications to submit: " + crawlerConfig.getMaxApplications());
             visualizer.visualizeAction("Searching for Easy Apply jobs...");
 
-            // Process jobs one by one
             while (applicationsSubmitted < crawlerConfig.getMaxApplications()) {
                 JobInfo job = findAndClickNextEasyApplyJob();
 
@@ -87,25 +97,20 @@ public class ReedCrawler extends AbstractJobCrawler {
                     break;
                 }
 
-                // Wait for job card to update - with adjusted timing
                 page.waitForTimeout(adjustedDelay(crawlerConfig.getJobCardLoadDelay()));
                 visualizer.visualizeAction("Analyzing job: " + job.getTitle());
 
-                // Extract and print job description
                 if (crawlerConfig.isDebugMode()) {
                     printJobDescriptionFromCard();
                 }
 
-                // Extract job description
                 String jobDescription = extractJobDescriptionFromCard();
                 visualizer.visualizeAction("Extracted job description (" + jobDescription.length() + " chars)");
 
-                // Generate CV for this job
                 visualizer.visualizeAction("Generating tailored CV...");
                 Path generatedCvPath = generateCVForJob(job, jobDescription);
 
                 if (generatedCvPath != null && Files.exists(generatedCvPath)) {
-                    // Apply for the job
                     visualizer.visualizeAction("Starting application process");
                     boolean applicationSuccess = applyForJob(generatedCvPath);
 
@@ -123,7 +128,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                     visualizer.visualizeAction("CV generation failed");
                 }
 
-                // Wait between applications - with adjusted timing
                 page.waitForTimeout(adjustedDelay(crawlerConfig.getApplicationDelay()));
             }
 
@@ -138,14 +142,11 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private boolean performJobSearch() {
         try {
-            // First wait a short time for page to fully load
             page.waitForTimeout(adjustedDelay(500));
-
             visualizer.visualizeAction("Looking for search input");
-            visualizer.highlightElements(crawlerConfig.getSearchInputSelector());
-            Locator searchInput = page.locator(crawlerConfig.getSearchInputSelector()).first();
+            visualizer.highlightElements(SEARCH_INPUT_SELECTOR);
+            Locator searchInput = page.locator(SEARCH_INPUT_SELECTOR).first();
 
-            // Check if search input exists and is visible
             if (searchInput == null || !searchInput.isVisible()) {
                 System.out.println("Search input not found or not visible");
                 visualizer.visualizeAction("Search input not found");
@@ -159,12 +160,9 @@ public class ReedCrawler extends AbstractJobCrawler {
             visualizer.visualizeAction("Searching...");
 
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-
-            // Wait for search results - with adjusted timing
             page.waitForTimeout(adjustedDelay(crawlerConfig.getSearchResultsDelay()));
 
-            // Verify search was successful by checking for job results
-            String[] jobSelectors = crawlerConfig.getJobCardSelectors().split(",");
+            String[] jobSelectors = JOB_CARDS_SELECTOR.split(",");
             boolean foundResults = false;
 
             for (String selector : jobSelectors) {
@@ -195,7 +193,6 @@ public class ReedCrawler extends AbstractJobCrawler {
             System.out.println("Login may be required. Checking for login elements...");
             visualizer.visualizeAction("Checking if login is required");
 
-            // Look for login form elements (username/email input, password input, login button)
             Locator emailInput = page.locator("input[type='email'], input[name='email'], input[id*='email'], input[id*='username']").first();
             Locator passwordInput = page.locator("input[type='password']").first();
             Locator loginButton = page.locator("button[type='submit'], input[type='submit'], button:has-text('Sign in'), button:has-text('Log in')").first();
@@ -208,12 +205,10 @@ public class ReedCrawler extends AbstractJobCrawler {
                 System.out.println("This crawler requires you to manually log in.");
                 visualizer.visualizeAction("Please log in manually");
 
-                // Highlight login elements to help user
                 visualizer.highlightElements("input[type='email'], input[name='email'], input[id*='email'], input[id*='username']");
                 visualizer.highlightElements("input[type='password']");
                 visualizer.highlightElements("button[type='submit'], input[type='submit'], button:has-text('Sign in'), button:has-text('Log in')");
 
-                // Wait for user to complete login manually
                 System.out.println("Waiting for 30 seconds for manual login...");
                 for (int i = 30; i > 0; i--) {
                     if (i % 5 == 0) {
@@ -222,7 +217,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                     page.waitForTimeout(1000);
                 }
 
-                // Check if login was successful
                 boolean loginSuccess = !page.url().contains("login") && !page.url().contains("signin");
                 if (loginSuccess) {
                     System.out.println("Login appears successful. Continuing with job search.");
@@ -248,7 +242,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private JobInfo findAndClickNextEasyApplyJob() {
         try {
-            String[] jobSelectors = crawlerConfig.getJobCardSelectors().split(",");
+            String[] jobSelectors = JOB_CARDS_SELECTOR.split(",");
             System.out.println("Looking for Easy Apply jobs...");
             visualizer.visualizeAction("Scanning for Easy Apply jobs");
 
@@ -264,7 +258,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                         }
                         visualizer.visualizeAction("Found " + count + " job cards");
 
-                        // Check each job card for Easy Apply button
                         for (int i = jobsChecked; i < count; i++) {
                             try {
                                 Locator element = elements.nth(i);
@@ -283,11 +276,9 @@ public class ReedCrawler extends AbstractJobCrawler {
                                         visualizer.visualizeAction("Found Easy Apply job: " + job.getTitle());
 
                                         element.scrollIntoViewIfNeeded();
-                                        // Adjusted wait time
                                         page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
                                         element.click();
                                         visualizer.visualizeAction("Opening job details");
-                                        // Adjusted wait time
                                         page.waitForTimeout(adjustedDelay(crawlerConfig.getJobCardLoadDelay()));
 
                                         return job;
@@ -309,10 +300,8 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Check if we need to load more jobs or go to next page
             visualizer.visualizeAction("Checking for more jobs or next page");
             if (tryLoadMoreJobsOrNextPage()) {
-                // Reset jobs checked counter for the new page/batch
                 jobsChecked = 0;
                 return findAndClickNextEasyApplyJob();
             }
@@ -330,7 +319,6 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private boolean tryLoadMoreJobsOrNextPage() {
         try {
-            // Try to find and click "Load More" button
             Locator loadMoreButton = page.locator("button:has-text('Load More'), button:has-text('Show More'), a:has-text('Load More')").first();
             if (loadMoreButton != null && loadMoreButton.isVisible()) {
                 System.out.println("Clicking 'Load More' button to get more jobs...");
@@ -343,7 +331,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                 return true;
             }
 
-            // Try to find and click "Next Page" button
             Locator nextPageButton = page.locator("a:has-text('Next'), a[aria-label='Next page'], button:has-text('Next')").first();
             if (nextPageButton != null && nextPageButton.isVisible()) {
                 System.out.println("Navigating to next page of results...");
@@ -366,7 +353,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private boolean hasEasyApplyButton(Locator jobCard) {
         try {
-            String[] easyApplySelectors = crawlerConfig.getEasyApplySelectors().split(",");
+            String[] easyApplySelectors = EASY_APPLY_SELECTOR.split(",");
 
             for (String selector : easyApplySelectors) {
                 try {
@@ -384,12 +371,11 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Check card text for Easy Apply keywords
             try {
                 String cardText = jobCard.textContent();
                 if (cardText != null) {
                     String lowerText = cardText.toLowerCase();
-                    String[] keywords = crawlerConfig.getEasyApplyKeywords().split(",");
+                    String[] keywords = EASY_APPLY_KEYWORDS.split(",");
                     for (String keyword : keywords) {
                         if (lowerText.contains(keyword.trim().toLowerCase())) {
                             if (crawlerConfig.isDebugMode()) {
@@ -442,11 +428,8 @@ public class ReedCrawler extends AbstractJobCrawler {
                 return false;
             }
 
-            // Adjusted wait time
             page.waitForTimeout(adjustedDelay(crawlerConfig.getApplicationStepDelay()));
-
             clickUpdateButton();
-            // Adjusted wait time
             page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
 
             if (!clickChooseOwnCVButton()) {
@@ -455,7 +438,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                 return false;
             }
 
-            // Adjusted wait time
             page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
 
             if (!uploadCVFile(cvPath)) {
@@ -487,7 +469,7 @@ public class ReedCrawler extends AbstractJobCrawler {
     }
 
     private boolean clickApplyNowButton() {
-        String[] applySelectors = crawlerConfig.getApplyButtonSelectors().split(",");
+        String[] applySelectors = APPLY_BUTTON_SELECTOR.split(",");
 
         for (String selector : applySelectors) {
             try {
@@ -510,7 +492,7 @@ public class ReedCrawler extends AbstractJobCrawler {
     }
 
     private void clickUpdateButton() {
-        String[] updateSelectors = crawlerConfig.getUpdateButtonSelectors().split(",");
+        String[] updateSelectors = UPDATE_BUTTON_SELECTOR.split(",");
 
         for (String selector : updateSelectors) {
             try {
@@ -534,7 +516,7 @@ public class ReedCrawler extends AbstractJobCrawler {
     }
 
     private boolean clickChooseOwnCVButton() {
-        String[] cvSelectors = crawlerConfig.getCvUploadSelectors().split(",");
+        String[] cvSelectors = CV_UPLOAD_SELECTOR.split(",");
 
         for (String selector : cvSelectors) {
             try {
@@ -558,7 +540,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private boolean uploadCVFile(Path cvPath) {
         try {
-            String[] fileInputSelectors = crawlerConfig.getFileInputSelectors().split(",");
+            String[] fileInputSelectors = FILE_INPUT_SELECTOR.split(",");
 
             for (String selector : fileInputSelectors) {
                 try {
@@ -591,8 +573,7 @@ public class ReedCrawler extends AbstractJobCrawler {
             System.out.println("Waiting for CV processing to complete...");
             visualizer.visualizeAction("Waiting for CV processing");
 
-            String[] processingSelectors = crawlerConfig.getProcessingSelectors().split(",");
-            // Adjusted initial wait time
+            String[] processingSelectors = PROCESSING_SELECTOR.split(",");
             page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingStartDelay()));
 
             for (String selector : processingSelectors) {
@@ -602,7 +583,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                     if (processingElement.isVisible()) {
                         System.out.println("CV processing detected, waiting for completion...");
                         visualizer.visualizeAction("CV processing in progress...");
-                        // Use polling rate from config
                         processingElement.waitFor(new Locator.WaitForOptions()
                                 .setState(WaitForSelectorState.HIDDEN)
                                 .setTimeout(crawlerConfig.getProcessingTimeout()));
@@ -613,7 +593,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Adjusted wait time after processing
             page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingCompleteDelay()));
             System.out.println("CV processing completed");
             visualizer.visualizeAction("CV processing completed");
@@ -621,13 +600,12 @@ public class ReedCrawler extends AbstractJobCrawler {
         } catch (Exception e) {
             System.out.println("Error waiting for CV processing: " + e.getMessage());
             visualizer.visualizeAction("Processing error: " + e.getMessage());
-            // Adjusted fallback delay
             page.waitForTimeout(adjustedDelay(crawlerConfig.getProcessingFallbackDelay()));
         }
     }
 
     private boolean submitApplication() {
-        String[] submitSelectors = crawlerConfig.getSubmitButtonSelectors().split(",");
+        String[] submitSelectors = SUBMIT_BUTTON_SELECTOR.split(",");
 
         for (String selector : submitSelectors) {
             try {
@@ -652,11 +630,10 @@ public class ReedCrawler extends AbstractJobCrawler {
 
     private void handleConfirmationDialog() {
         try {
-            // Wait longer for initial dialog appearance
             page.waitForTimeout(adjustedDelay(crawlerConfig.getConfirmationDialogDelay()));
             visualizer.visualizeAction("Checking for confirmation dialog");
 
-            String[] okSelectors = crawlerConfig.getConfirmationSelectors().split(",");
+            String[] okSelectors = CONFIRMATION_SELECTOR.split(",");
             boolean dialogHandled = false;
 
             for (String selector : okSelectors) {
@@ -664,7 +641,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                     visualizer.highlightElements(selector);
                     Locator okButton = page.locator(selector.trim()).first();
 
-                    // Wait explicitly for the button to be visible and enabled
                     try {
                         okButton.waitFor(new Locator.WaitForOptions()
                                 .setState(WaitForSelectorState.VISIBLE)
@@ -676,19 +652,14 @@ public class ReedCrawler extends AbstractJobCrawler {
                     if (okButton.isVisible() && okButton.isEnabled()) {
                         System.out.println("Found confirmation dialog, clicking OK...");
                         visualizer.visualizeAction("Clicking OK on confirmation dialog");
-
-                        // Ensure button is in view
                         okButton.scrollIntoViewIfNeeded();
-
-                        // Add a small pause before clicking
                         page.waitForTimeout(500);
 
-                        // Try multiple click attempts if needed
                         for (int attempt = 0; attempt < 3; attempt++) {
                             try {
                                 okButton.click(new Locator.ClickOptions()
-                                        .setForce(true) // Force the click
-                                        .setTimeout(5000));  // Wait up to 5 seconds for click
+                                        .setForce(true)
+                                        .setTimeout(5000));
                                 dialogHandled = true;
                                 break;
                             } catch (Exception e) {
@@ -697,7 +668,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                         }
 
                         if (dialogHandled) {
-                            // Wait to ensure dialog closes
                             page.waitForTimeout(adjustedDelay(crawlerConfig.getElementInteractionDelay()));
                             return;
                         }
@@ -708,7 +678,6 @@ public class ReedCrawler extends AbstractJobCrawler {
             }
 
             if (!dialogHandled) {
-                // Try JavaScript click as fallback
                 for (String selector : okSelectors) {
                     try {
                         page.evaluate("document.querySelector('" + selector + "').click();");
@@ -738,10 +707,9 @@ public class ReedCrawler extends AbstractJobCrawler {
             System.out.println("DEBUG: JOB DESCRIPTION FROM UPDATED CARD");
             System.out.println("=".repeat(80));
 
-            String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
+            String[] cardSelectors = JOB_DESCRIPTION_SELECTOR.split(",");
             boolean foundDescription = false;
 
-            // First try the specific class you mentioned
             try {
                 String specificSelector = ".job-details-drawer-modal_jobSection__42ckh.job-details-drawer-modal_jobDescription__r4Xn1";
                 visualizer.highlightElements(specificSelector);
@@ -761,10 +729,8 @@ public class ReedCrawler extends AbstractJobCrawler {
                     foundDescription = true;
                 }
             } catch (Exception e) {
-                // Continue to other selectors
             }
 
-            // If specific selector didn't work, try the configured ones
             if (!foundDescription) {
                 for (String cardSelector : cardSelectors) {
                     try {
@@ -811,9 +777,7 @@ public class ReedCrawler extends AbstractJobCrawler {
             StringBuilder fullDescription = new StringBuilder();
             visualizer.visualizeAction("Extracting job description");
 
-            // First try the specific Reed class you mentioned
             try {
-                // Try with the specific class names mentioned
                 String specificSelector = ".job-details-drawer-modal_jobSection__42ckh.job-details-drawer-modal_jobDescription__r4Xn1";
                 visualizer.highlightElements(specificSelector);
                 Locator specificJobDesc = page.locator(specificSelector).first();
@@ -825,7 +789,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                     return fullDescription.toString();
                 }
 
-                // Try similar classes that might match
                 String partialSelector1 = "[class*='jobSection'][class*='jobDescription']";
                 String partialSelector2 = "[class*='job-details'][class*='description']";
 
@@ -840,21 +803,17 @@ public class ReedCrawler extends AbstractJobCrawler {
                     }
                 }
             } catch (Exception e) {
-                // Continue to other selectors
                 System.out.println("Could not find specific Reed job description element, trying alternatives");
             }
 
-            // Then try the configured selectors
-            String[] cardSelectors = crawlerConfig.getJobDescriptionSelectors().split(",");
+            String[] cardSelectors = JOB_DESCRIPTION_SELECTOR.split(",");
             for (String cardSelector : cardSelectors) {
                 try {
                     visualizer.highlightElements(cardSelector.trim());
                     Locator jobCard = page.locator(cardSelector.trim()).first();
                     if (jobCard != null && jobCard.isVisible()) {
-                        // Get main text content
                         fullDescription.append(jobCard.textContent()).append("\n\n");
 
-                        // Extract all article text content
                         Locator allArticleElements = jobCard.locator("article, section, div[class*='description'], div[class*='detail'], div[class*='content'], p");
                         visualizer.highlightElements(cardSelector + " article, " + cardSelector + " section, "
                                 + cardSelector + " div[class*='description'], " + cardSelector + " div[class*='detail'], "
@@ -871,7 +830,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                             }
                         }
 
-                        // Also try to extract all paragraph text
                         Locator paragraphs = jobCard.locator("p, li, h1, h2, h3, h4, h5, h6");
                         int pCount = paragraphs.count();
 
@@ -892,7 +850,6 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Fallback to common job description containers
             String[] commonJobDescSelectors = {
                 "[class*='job-description']",
                 "[class*='jobDescription']",
@@ -923,14 +880,11 @@ public class ReedCrawler extends AbstractJobCrawler {
                 }
             }
 
-            // Ultimate fallback to full page content
             visualizer.visualizeAction("Using fallback method for description");
             StringBuilder pageContent = new StringBuilder();
 
-            // Get main body content
             pageContent.append(page.textContent("body")).append("\n\n");
 
-            // Try to extract job description from common containers
             String[] descContainers = {
                 ".job-description",
                 "#job-description",
@@ -948,7 +902,7 @@ public class ReedCrawler extends AbstractJobCrawler {
 
                     for (int i = 0; i < count; i++) {
                         String text = elements.nth(i).textContent();
-                        if (text != null && text.length() > 100) { // Only include substantial content
+                        if (text != null && text.length() > 100) {
                             pageContent.append(text).append("\n\n");
                         }
                     }
@@ -961,14 +915,13 @@ public class ReedCrawler extends AbstractJobCrawler {
                 return pageContent.toString();
             }
 
-            // If all else fails, just return body text
             visualizer.visualizeAction("Using body text as fallback");
             return page.textContent("body");
 
         } catch (Exception e) {
             visualizer.visualizeAction("Error extracting description");
             System.out.println("Error extracting job description: " + e.getMessage());
-            return page.textContent("body"); // Ultimate fallback
+            return page.textContent("body");
         }
     }
 }

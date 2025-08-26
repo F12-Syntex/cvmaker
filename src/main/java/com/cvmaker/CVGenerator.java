@@ -22,7 +22,7 @@ public class CVGenerator {
     public CVGenerator(ConfigManager config) {
         this.config = config;
         this.templateLoader = new TemplateLoader(Paths.get(config.getTemplateDirectory()));
-        this.aiService = new AiService(config.getAiModel());
+        this.aiService = new AiService(config.getAiModel(), config.getAiTemperature());
         this.jobDataFetcher = new JobDataFetcher();
     }
 
