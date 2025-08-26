@@ -164,9 +164,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
 
             // Create config for this specific job
             config.setJobDescriptionContent(jobContent);
-
-            System.out.println(jobContent);
-
+            
             // Generate CV using the simplified CVGenerator
             CVGenerator generator = new CVGenerator(config);
 
