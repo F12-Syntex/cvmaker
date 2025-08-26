@@ -15,10 +15,13 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.options.LoadState;
 
+import lombok.Data;
+
 /**
  * Abstract base implementation for all job site crawlers. Handles common
  * functionality like browser setup, CV generation, etc.
  */
+@Data
 public abstract class AbstractJobCrawler implements JobCrawler {
 
     protected Playwright playwright;

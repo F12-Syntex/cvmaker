@@ -1,6 +1,8 @@
 package com.cvmaker.crawler;
 
 import com.cvmaker.configuration.CrawlerConfig;
+import com.cvmaker.crawler.generic.GenericCrawler;
+import com.cvmaker.crawler.reed.ReedCrawler;
 
 /**
  * Factory class for creating different types of job crawlers.
