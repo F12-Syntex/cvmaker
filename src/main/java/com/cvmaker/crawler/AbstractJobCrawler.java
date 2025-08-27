@@ -9,7 +9,6 @@ import java.util.Map;
 import com.cvmaker.CVGenerator;
 import com.cvmaker.configuration.ConfigManager;
 import com.cvmaker.configuration.CrawlerConfig;
-import com.cvmaker.crawler.cache.PageInputCacheManagerCSV;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
@@ -88,11 +87,9 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             page.setDefaultNavigationTimeout(crawlerConfig.getNavigationTimeout());
 
             // 🔹 Automatically cache the main page on load
-            page.onLoad(p -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), p));
-
+            // page.onLoad(p -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), p));
             // 🔹 Automatically cache *all new pages* (popups, tabs, redirects)
-            context.onPage(p -> p.onLoad(page -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), page)));
-
+            // context.onPage(p -> p.onLoad(page -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), page)));
             System.out.println("Browser setup completed for " + getCrawlerName());
 
         } catch (Exception e) {

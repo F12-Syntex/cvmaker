@@ -4,6 +4,7 @@ import java.util.Scanner;
 
 import com.cvmaker.configuration.CrawlerConfig;
 import com.cvmaker.crawler.AbstractJobCrawler;
+import com.cvmaker.crawler.ExternalRedirectHandler;
 
 /**
  * AI-powered generic form filling crawler.
@@ -44,6 +45,10 @@ public class GenericCrawler extends AbstractJobCrawler {
 
             // Step 2: Fill form with AI-suggested values
             filler.fillForm(analyzer.getFormContext());
+
+            // 🔹 Step 3: Handle external redirect after form submission
+            ExternalRedirectHandler redirectHandler = new ExternalRedirectHandler(page, crawlerConfig);
+            redirectHandler.handleRedirect();
 
         } catch (Exception e) {
             System.out.println("⚠️ Error during form processing: " + e.getMessage());

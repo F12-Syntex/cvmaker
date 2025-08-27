@@ -57,6 +57,9 @@ public class CrawlerConfig {
     private int processingFallbackDelay;
     private int confirmationDialogDelay;
 
+    // AI modal handling
+    private boolean aiModalEnabled;
+
     // Site settings
     private String baseUrl;
     private String searchKeywords;
@@ -138,6 +141,8 @@ public class CrawlerConfig {
         this.processingFallbackDelay = 5000;
         this.confirmationDialogDelay = 2000;
 
+        this.aiModalEnabled = false;
+
         this.baseUrl = "";
         this.searchKeywords = "junior software development";
     }
@@ -194,6 +199,9 @@ public class CrawlerConfig {
         this.processingCompleteDelay = Integer.parseInt(properties.getProperty("timing.processing.complete.delay", String.valueOf(this.processingCompleteDelay)));
         this.processingFallbackDelay = Integer.parseInt(properties.getProperty("timing.processing.fallback.delay", String.valueOf(this.processingFallbackDelay)));
         this.confirmationDialogDelay = Integer.parseInt(properties.getProperty("timing.confirmation.dialog.delay", String.valueOf(this.confirmationDialogDelay)));
+
+        this.aiModalEnabled = Boolean.parseBoolean(properties.getProperty(
+                "crawler.ai.modal.enabled", String.valueOf(this.aiModalEnabled)));
 
         // Site settings
         this.baseUrl = properties.getProperty("site.base.url", this.baseUrl);

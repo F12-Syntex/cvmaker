@@ -1,5 +1,6 @@
 package com.cvmaker.service.ai;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -206,5 +207,17 @@ public class AiService {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    public String answerApplicationQuestions(String userData, Map<String, Object> modalStructure) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are assisting with a job application on Reed.co.uk.\n");
+        prompt.append("Candidate profile:\n").append(userData).append("\n\n");
+        prompt.append("Modal/questions:\n").append(modalStructure.toString()).append("\n\n");
+        prompt.append("Provide answers in JSON array of actions, e.g.:\n");
+        prompt.append("[ {\"type\":\"SELECT_OPTION\",\"field\":\"19996198\",\"value\":\"Yes\"},\n");
+        prompt.append("  {\"type\":\"CLICK_BUTTON\",\"value\":\"Continue\"} ]");
+
+        return queryWithProgress(prompt.toString());
     }
 }
