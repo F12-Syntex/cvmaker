@@ -33,6 +33,9 @@ public class CrawlerFactory {
             case REED -> {
                 return new ReedCrawler(config);
             }
+            case FORM -> {
+                return new com.cvmaker.crawler.form.FormCrawler(config);
+            }
             case GENERIC -> {
                 return new GenericCrawler(config);
             }
@@ -47,7 +50,8 @@ public class CrawlerFactory {
      */
     public enum CrawlerType {
         REED,
-        GENERIC
+        GENERIC,
+        FORM
         // Add more crawler types here as they are implemented
     }
 }

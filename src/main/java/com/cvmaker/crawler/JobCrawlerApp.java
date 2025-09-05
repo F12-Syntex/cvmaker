@@ -13,8 +13,8 @@ public class JobCrawlerApp {
 
         try {
             // Example 1: Using factory pattern
-            JobCrawler reedCrawler = CrawlerFactory.createCrawler(CrawlerType.REED);
-            manager.addCrawler(reedCrawler);
+            JobCrawler formCrawler = CrawlerFactory.createCrawler(CrawlerType.FORM);
+            manager.addCrawler(formCrawler);
 
             // Example 2: Custom configuration
             CrawlerConfig customConfig = new CrawlerConfig();
@@ -22,7 +22,7 @@ public class JobCrawlerApp {
             customConfig.setDebugMode(true);
 
             // Start a specific crawler
-            manager.startCrawler(reedCrawler);
+            manager.startCrawler(formCrawler);
 
             // Or start all added crawlers
             // manager.startAllCrawlers();
