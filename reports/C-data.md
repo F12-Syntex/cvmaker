@@ -108,3 +108,46 @@ zones, zone conversion, null/garbage, constructor uses email time and orders acr
 
 **Left.** Records already stored keep their old (processing-time) `emailTimestamp`; they are not
 re-derived from `date` on load, because the stored value may have been edited in the sheet.
+
+## Item 22: Gmail fetch reads one page, platform charset, null bugs, duplicated body
+
+**What was wrong.** Each search read only the first result page; bodies were decoded with
+`new String(bytes)` (platform charset); `mimeType.startsWith` threw on a null MIME type;
+`getPayload().getHeaders()` was used without null checks; text/plain and text/html alternatives
+were both appended, so the body was duplicated; the date range was hardcoded to empty.
+
+**What changed** (`GmailService`; `initialize()` and the OAuth scopes are untouched, item 21 owns them).
+- `listAllMessages(PageFetcher, maxPages)` follows `nextPageToken`, capped at
+  `MAX_PAGES_PER_QUERY` = 20 pages (10,000 IDs) per query with a warning when the cap is hit.
+- `toEmailData(id, Message)` / `headerValue(...)`: null-safe payload and headers, header names
+  case-insensitive; empty body falls back to Gmail's snippet; date via item 17's `effectiveDate`.
+- `extractBody(MessagePart)` (pure, static): walks the MIME tree, uses all `text/plain` leaves, or
+  the `text/html` leaves only when there is no plain text; skips attachments (filename or
+  `Content-Disposition: attachment`) and non-text leaves; decodes each part with the charset from
+  its `Content-Type` (default and fallback UTF-8) via `MessagePartBody.decodeData()`.
+- Optional settings `GMAIL_SEARCH_AFTER` / `GMAIL_SEARCH_BEFORE` (`yyyy/MM/dd` or `yyyy-MM-dd`,
+  constants in `ApplicationConfig`) build the `after:`/`before:` filter (`buildDateRange`, which
+  throws `IllegalArgumentException` naming the key on a bad value).
+- `InterruptedException` during the inter-query delay now restores the interrupt flag and stops.
+- Result set is a `LinkedHashSet` (stable order); the return type is still `Set<String>`.
+
+**Verified by.** `GmailServiceTest` with hand-built `MessagePart`/`ListMessagesResponse` objects:
+alternative not duplicated, html-only, nested mixed with attachments, UTF-8 and ISO-8859-1,
+unknown charset, null MIME/body/headers/payload, non-text leaves, header lookup, snippet and
+internalDate fallbacks, date-range building and validation, pagination, page cap, null page.
+
+**Left.** HTML-only bodies are passed on as raw HTML (as before); converting to text would need
+jsoup in this class. Live Gmail calls are not tested (no credentials here).
+
+## Cross-cluster notes for the lead
+- All public signatures used elsewhere are unchanged (`DataStorage` methods, `JobApplicationData`
+  getters/setters/constructors/`serialize`/`deserialize`, `GmailService.EmailData`,
+  `findUnprocessedEmails`, `getEmailContent`, `ApplicationConfig` getters and constants). Added:
+  `ApplicationConfig.get/require/getDataDirectory/get*File` and key constants,
+  `DataStorage(Path)`, `DataStorage.saveJobApplicationsDb`, `JobApplicationData.toJsonLine/
+  fromJsonLine/parseEmailTimestamp`.
+- C-sheets (`GoogleSheetsService`) could use `ApplicationConfig.require(GOOGLE_CLIENT_ID)` for a
+  clear error; item 21 should drop the deprecated `getGoogleSheetsId/Secret`.
+- `.env.example` (C-docs) should list the new optional keys `CVMAKER_DATA_DIR`,
+  `GMAIL_SEARCH_AFTER`, `GMAIL_SEARCH_BEFORE`.
+- Item 17 makes `emailTimestamp` meaningful; C-sheets' `isNewerApplication` can rely on it.

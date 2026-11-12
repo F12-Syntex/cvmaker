@@ -29,6 +29,9 @@ public class ApplicationConfig {
     public static final String EXA_API_KEY = "EXA_API_KEY";
     /** Optional directory for the local data files. Defaults to the working directory. */
     public static final String DATA_DIR = "CVMAKER_DATA_DIR";
+    /** Optional Gmail search bounds, {@code yyyy/MM/dd}; {@code before} is exclusive. */
+    public static final String GMAIL_SEARCH_AFTER = "GMAIL_SEARCH_AFTER";
+    public static final String GMAIL_SEARCH_BEFORE = "GMAIL_SEARCH_BEFORE";
 
     private static final Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
 
