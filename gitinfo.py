@@ -9,7 +9,7 @@ import random
 import logging
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects, RequestException
 from datetime import datetime
-import openai 
+from openai import OpenAI
 from collections import defaultdict, Counter
 
 # Set up logging
@@ -45,6 +45,10 @@ SKIP_PATTERNS = {
 MAX_FILES_PER_REPO = 15  # Limit files analyzed per repo
 MAX_FILE_SIZE = 5000  # Max characters per file to analyze
 MAX_TOTAL_CONTENT = 8000  # Max total content sent to AI per repo
+MAX_RATE_LIMIT_WAIT = 120  # Cap (seconds) on a single rate-limit wait
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')  # Cheap default; override via env
+
+_openai_client = None
 
 def get_openai_api_key():
     """Get OpenAI API key from environment variable"""
@@ -52,46 +56,44 @@ def get_openai_api_key():
     if not api_key:
         logging.error("OPENAI_API_KEY environment variable not found")
         return None
-    openai.api_key = api_key
+    global _openai_client
+    _openai_client = OpenAI(api_key=api_key)
     return api_key
 
 def make_request_with_retry(url, max_retries=3, base_delay=1, headers=None, params=None):
-    """Make a request with exponential backoff retry logic"""
-    retries = 0
-    while retries < max_retries:
+    """Make a request with exponential backoff; every failed attempt (including
+    rate limits) counts toward max_retries. Returns None after the last attempt."""
+    last_error = "unknown error"
+    for attempt in range(1, max_retries + 1):
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            
-            if response.status_code == 403 and 'rate limit' in response.text.lower():
-                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-                current_time = int(time.time())
-                sleep_time = max(reset_time - current_time + 5, 60)
-                logging.warning(f"Rate limit hit. Waiting for {sleep_time} seconds...")
-                time.sleep(sleep_time)
-                continue
-                
+
             if response.status_code == 200:
                 return response
-            else:
-                logging.warning(f"Request failed with status code {response.status_code}")
-                if response.status_code >= 500:
-                    retries += 1
-                    delay = base_delay * (2 ** retries) + random.uniform(0, 1)
-                    logging.info(f"Retrying in {delay:.2f} seconds...")
-                    time.sleep(delay)
-                else:
-                    return None
-                    
-        except (ConnectionError, Timeout, TooManyRedirects, RequestException) as e:
-            retries += 1
-            if retries >= max_retries:
-                logging.error(f"Max retries reached for {url}. Last error: {str(e)}")
+
+            if response.status_code == 403 and 'rate limit' in response.text.lower():
+                last_error = "GitHub rate limit"
+                if attempt < max_retries:
+                    reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+                    sleep_time = min(max(reset_time - int(time.time()) + 5, 1), MAX_RATE_LIMIT_WAIT)
+                    logging.warning(f"Rate limit hit (attempt {attempt}/{max_retries}). Waiting {sleep_time}s...")
+                    time.sleep(sleep_time)
+                continue
+
+            logging.warning(f"Request failed with status code {response.status_code}")
+            if response.status_code < 500:
                 return None
-                
-            delay = base_delay * (2 ** retries) + random.uniform(0, 1)
-            logging.info(f"Connection error. Retrying in {delay:.2f} seconds...")
+            last_error = f"HTTP {response.status_code}"
+
+        except RequestException as e:  # includes ConnectionError, Timeout, TooManyRedirects
+            last_error = str(e)
+
+        if attempt < max_retries:
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+            logging.info(f"Retrying in {delay:.2f} seconds (attempt {attempt}/{max_retries})...")
             time.sleep(delay)
-    
+
+    logging.error(f"Giving up on {url} after {max_retries} attempts. Last error: {last_error}")
     return None
 
 def get_github_repositories():
@@ -298,8 +300,8 @@ Please provide a JSON response with:
 Focus on what the developer has accomplished and learned. Be specific about technical skills but keep it concise.
 """
 
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # Using cheaper model to control costs
+        response = _openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=800,  # Limit response size
             temperature=0.3
