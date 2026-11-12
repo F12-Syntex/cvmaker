@@ -1,3 +1,6 @@
+// Pure helpers shared with the content script and the tests.
+importScripts('lib/fields.js');
+
 // Create context menu when extension is installed
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -53,7 +56,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
   } else if (request.action === "openLinkedInSearch") {
     // Open LinkedIn search in new tab
-    const url = buildLinkedInSearchUrl(request.params);
+    const url = AutoApplyLib.buildLinkedInSearchUrl(request.params);
     chrome.tabs.create({ url: url }, (tab) => {
       // Store the search tab ID for coordination
       chrome.storage.local.set({ searchTabId: tab.id });
@@ -79,19 +82,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
   }
 });
-
-function buildLinkedInSearchUrl(params) {
-  const baseUrl = 'https://www.linkedin.com/jobs/search/';
-  const searchParams = new URLSearchParams();
-  
-  searchParams.append('keywords', params.jobTitle);
-  if (params.location) searchParams.append('location', params.location);
-  if (params.experienceLevel) searchParams.append('f_E', params.experienceLevel);
-  searchParams.append('f_JT', 'F'); // Full-time
-  searchParams.append('sortBy', 'DD'); // Date posted
-  
-  return `${baseUrl}?${searchParams.toString()}`;
-}
 
 // Listen for tab updates to know when LinkedIn has loaded
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
