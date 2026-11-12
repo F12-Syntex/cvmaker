@@ -1,6 +1,5 @@
 // Store the last right-clicked element
 let lastClickedElement = null;
-let clickCoordinates = { x: 0, y: 0 };
 let isSearching = false;
 let searchData = {
   jobs: [],
@@ -13,7 +12,6 @@ let searchData = {
 // Track right-click events to store the clicked element
 document.addEventListener('contextmenu', function (event) {
     lastClickedElement = event.target;
-    clickCoordinates = { x: event.pageX, y: event.pageY };
 
     // Add visual indicator to show which element was clicked
     removeHighlight();
@@ -38,12 +36,15 @@ function removeHighlight() {
     });
 }
 
-function findElementAtCoordinates(x, y) {
-    if (x && y) {
-        const element = document.elementFromPoint(x, y);
-        if (element) return element;
+// Sends a message to the extension (background or popup). When nobody is listening, for example
+// because the popup is closed, Chrome rejects the promise; that is expected, so it is swallowed.
+function notifyExtension(message) {
+    try {
+        const pending = chrome.runtime.sendMessage(message);
+        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+    } catch (error) {
+        // The extension was reloaded and this content script is orphaned.
     }
-    return lastClickedElement;
 }
 
 function findInputFieldsInElement(element) {
@@ -126,7 +127,7 @@ async function startLinkedInScraping(maxPages, jobTitle, location) {
         await scrapeLinkedInJobs();
     } catch (error) {
         console.error('LinkedIn scraping error:', error);
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "jobSearchComplete",
             success: false,
             error: error.message
@@ -139,7 +140,7 @@ async function startLinkedInScraping(maxPages, jobTitle, location) {
 async function scrapeLinkedInJobs() {
     while (searchData.currentPage <= searchData.maxPages && isSearching) {
         // Send progress update
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "jobSearchProgress",
             currentPage: searchData.currentPage,
             totalPages: searchData.maxPages,
@@ -175,7 +176,7 @@ async function scrapeLinkedInJobs() {
     downloadJobsFile(jobsText, searchData.jobTitle);
     
     // Send completion message
-    chrome.runtime.sendMessage({
+    notifyExtension({
         action: "jobSearchComplete",
         success: true,
         totalJobs: searchData.jobs.length
@@ -354,7 +355,7 @@ function downloadJobsFile(content, jobTitle) {
     const filename = `linkedin_jobs_${jobTitle.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
     
     // Use Chrome's downloads API through background script
-    chrome.runtime.sendMessage({
+    notifyExtension({
         action: "downloadFile",
         url: url,
         filename: filename
@@ -362,15 +363,17 @@ function downloadJobsFile(content, jobTitle) {
 }
 
 // AI form filling functionality
-async function fillElementWithAI(apiKey, userData, clickX, clickY) {
+async function fillElementWithAI(apiKey, userData) {
     let fieldsCount = 0;
     let errors = [];
 
     try {
-        const targetElement = findElementAtCoordinates(clickX, clickY) || lastClickedElement;
+        // The context menu gives no usable coordinates, so the element recorded by the
+        // contextmenu listener is the target.
+        const targetElement = lastClickedElement;
 
-        if (!targetElement) {
-            throw new Error('Could not find target element');
+        if (!targetElement || targetElement.isConnected === false) {
+            throw new Error('Could not find target element. Right-click the form element again.');
         }
 
         highlightElement(targetElement);
@@ -438,7 +441,7 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
             ? `✅ Successfully filled ${fieldsCount} fields in selected element`
             : '⚠️ No fields were filled';
 
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "showNotification",
             message: message
         });
@@ -449,7 +452,7 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
         console.error('Element filling failed:', error);
         removeHighlight();
 
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "showNotification",
             message: `❌ Error: ${error.message}`
         });
@@ -458,15 +461,12 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
     }
 }
 
+// Only native <select> elements are handled here. Custom comboboxes are text inputs and are
+// filled as text by the callers.
 async function fillSelectWithAI(apiKey, userData, element, jobContext) {
     if (element.tagName === 'SELECT') {
         return await fillNativeSelectWithAI(apiKey, userData, element, jobContext);
     }
-
-    if (element.role === 'combobox' || element.classList.contains('rcmpaginatedselectinput')) {
-        return await fillCustomDropdownWithAI(apiKey, userData, element, jobContext);
-    }
-
     return false;
 }
 
@@ -821,7 +821,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ success: false, error: error.message });
         }
     } else if (request.action === "fillElementWithAI") {
-        fillElementWithAI(request.apiKey, request.userData, request.clickX, request.clickY)
+        fillElementWithAI(request.apiKey, request.userData)
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;

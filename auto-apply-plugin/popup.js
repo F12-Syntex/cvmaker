@@ -134,7 +134,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry';
-    logEntry.innerHTML = `<span class="log-timestamp">[${timestamp}]</span> ${message}`;
+    // textContent only: messages can contain page text and error strings.
+    const stamp = document.createElement('span');
+    stamp.className = 'log-timestamp';
+    stamp.textContent = `[${timestamp}]`;
+    logEntry.appendChild(stamp);
+    logEntry.appendChild(document.createTextNode(` ${message}`));
     searchLogs.appendChild(logEntry);
     searchLogs.scrollTop = searchLogs.scrollHeight;
   }
@@ -220,7 +225,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Reset counters
     jobsFound.textContent = '0';
     pagesScraped.textContent = '0';
-    searchLogs.innerHTML = '';
+    searchLogs.textContent = '';
     progressFill.style.width = '0%';
     
     addLog('🚀 Starting job search...');
@@ -235,6 +240,9 @@ document.addEventListener('DOMContentLoaded', function() {
         experienceLevel: experienceLevel
       }
     }, function(response) {
+      if (chrome.runtime.lastError) {
+        addLog(`❌ ${chrome.runtime.lastError.message}`);
+      }
       if (response && response.success) {
         currentSearchTabId = response.tabId;
         addLog('🌐 LinkedIn opened, waiting for page load...');
@@ -279,7 +287,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setLoading(fillBtn, true, '🤖 AI is analyzing and filling the form...', applyStatus);
     
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (!tabs[0]) {
+      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
         setLoading(fillBtn, false);
         applyStatus.textContent = '❌ Unable to access current tab';
         applyStatus.className = 'status error';
@@ -316,13 +324,28 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
+  function showTabError(button, message) {
+    setLoading(button, false);
+    applyStatus.textContent = message;
+    applyStatus.className = 'status error';
+  }
+
   // Clear form
   clearBtn.addEventListener('click', function() {
     setLoading(clearBtn, true, '🗑️ Clearing all form fields...', applyStatus);
     
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
+        showTabError(clearBtn, '❌ Unable to access current tab');
+        return;
+      }
       chrome.tabs.sendMessage(tabs[0].id, {action: "clearForm"}, function(response) {
         setLoading(clearBtn, false);
+        
+        if (chrome.runtime.lastError) {
+          showTabError(clearBtn, '❌ Cannot access this page. Try refreshing and reopening the extension.');
+          return;
+        }
         
         if (response && response.success) {
           if (response.fieldsCount > 0) {
@@ -345,8 +368,17 @@ document.addEventListener('DOMContentLoaded', function() {
     setLoading(analyzeBtn, true, '📊 Analyzing current page structure...', applyStatus);
     
     chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
+        showTabError(analyzeBtn, '❌ Unable to access current tab');
+        return;
+      }
       chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePage"}, function(response) {
         setLoading(analyzeBtn, false);
+        
+        if (chrome.runtime.lastError) {
+          showTabError(analyzeBtn, '❌ Cannot access this page. Try refreshing and reopening the extension.');
+          return;
+        }
         
         if (response && response.success) {
           applyStatus.textContent = `📊 Found ${response.inputFields} input fields, ${response.forms} forms, ${response.buttons} buttons`;

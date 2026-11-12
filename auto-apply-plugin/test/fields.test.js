@@ -129,6 +129,20 @@ test('buildLinkedInSearchUrl encodes the search parameters', () => {
   assert.equal(url.searchParams.has('f_E'), false);
 });
 
+test('buildLinkedInSearchUrl maps experience levels to LinkedIn f_E codes', () => {
+  const code = (level) => new URL(buildLinkedInSearchUrl({ jobTitle: 'x', experienceLevel: level })).searchParams.get('f_E');
+  assert.equal(code('internship'), '1');
+  assert.equal(code('entry'), '2');
+  assert.equal(code('associate'), '3');
+  assert.equal(code('mid'), '4');
+  assert.equal(code('senior'), '4');
+  assert.equal(code('director'), '5');
+  assert.equal(code('executive'), '6');
+  assert.equal(code('3'), '3');
+  assert.equal(code('wizard'), null);
+  assert.equal(code(''), null);
+});
+
 test('buildLinkedInSearchUrl leaves out an empty location', () => {
   const url = new URL(buildLinkedInSearchUrl({ jobTitle: 'Engineer', location: '' }));
   assert.equal(url.searchParams.has('location'), false);

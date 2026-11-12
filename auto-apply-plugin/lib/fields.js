@@ -116,13 +116,31 @@
       .substring(0, limit);
   }
 
+  // LinkedIn's f_E filter takes numeric codes; the popup offers names.
+  const LINKEDIN_EXPERIENCE_CODES = {
+    internship: '1',
+    entry: '2',
+    associate: '3',
+    mid: '4',
+    senior: '4', // LinkedIn has a single "Mid-Senior level"
+    director: '5',
+    executive: '6'
+  };
+
+  function linkedInExperienceCode(level) {
+    const key = String(level || '').toLowerCase().trim();
+    if (/^[1-6]$/.test(key)) return key;
+    return Object.prototype.hasOwnProperty.call(LINKEDIN_EXPERIENCE_CODES, key) ? LINKEDIN_EXPERIENCE_CODES[key] : '';
+  }
+
   function buildLinkedInSearchUrl(params) {
     const baseUrl = 'https://www.linkedin.com/jobs/search/';
     const searchParams = new URLSearchParams();
 
     searchParams.append('keywords', params.jobTitle);
     if (params.location) searchParams.append('location', params.location);
-    if (params.experienceLevel) searchParams.append('f_E', params.experienceLevel);
+    const experienceCode = linkedInExperienceCode(params.experienceLevel);
+    if (experienceCode) searchParams.append('f_E', experienceCode);
     searchParams.append('f_JT', 'F'); // Full-time
     searchParams.append('sortBy', 'DD'); // Date posted
 
@@ -169,6 +187,7 @@ Scraped: ${new Date(job.scraped).toLocaleString()}
     normalizeFieldText,
     determineFieldType,
     buildFieldContext,
+    linkedInExperienceCode,
     buildLinkedInSearchUrl,
     formatJobsForFile
   };
