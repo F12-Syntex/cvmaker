@@ -47,6 +47,25 @@ original conversation. It is updated and pushed every time a batch of tasks clos
 - Each agent writes `reports/<cluster>.md` with per-item detail. Those files are the detailed record;
   this file is the index.
 
+### 23:10 UTC — wave 1 merged and green
+- All twelve wave 1 tasks (T1-T12) reported done; their branches were merged with no conflicts (61 commits).
+- One integration break found by the gate: the pom cleanup (T10) removed `org.json` while the data cluster (T6)
+  started using it for the JSON-lines store. Restored the dependency (commit `fix(build): restore org.json`).
+- Gate on the merged tree, run by the lead: `mvn -q verify` exit 0 with 793 tests, 0 failures;
+  `node --test auto-apply-plugin/` 72 pass; `python3 -m py_compile gitinfo.py` ok; `target/cvmaker-1.0-SNAPSHOT.jar` built.
+- Backlog items closed in wave 1: 1-8, 10-17, 19, 20, 22-35, 38, 39, and 18/37/13 in part.
+  Per-item detail (what was wrong, what changed, how verified, what is left) is in `reports/C-*.md`.
+- Time note: the session lost about 50 minutes between 22:16 and 23:09 to a container restart while a
+  command waited for approval. The agents had finished in the meantime.
+- Known leftovers recorded by agents (see their reports): no live run against OpenAI, Google, Reed or LinkedIn
+  was possible; `pdflatex` is not installed here; job boards that need JavaScript are not fetched by `JobDataFetcher`;
+  an email whose AI call always fails is retried on every run (no persisted attempt count);
+  `websearch.SearchService` and `ApplicationConfig.getExaApiKey()` have no callers left.
+
+### 23:14 UTC — wave 2 dispatched
+- T13 (item 9), T14 (item 36), T15 (item 21), T16 (item 18 rest, CVGenerator wiring, HTML-strip bug), T18 (build hygiene),
+  plus three read-only reviews: T17a (items 7, 8), T17b (items 16, 32), T19 (integration audit). See `PLAN.md`.
+
 ## Decisions and deviations
 
 - Agents work in separate git worktrees because a shared tree would let one agent's half-edited file break

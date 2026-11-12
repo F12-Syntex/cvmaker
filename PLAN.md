@@ -32,34 +32,36 @@ Status values: `todo`, `in-progress`, `done`, `failed`, `blocked`.
 
 | ID | Cluster | Items in order | Tier | Files owned | Extra check | Risk | Status |
 |---|---|---|---|---|---|---|---|
-| T1 | C-email | 3, 4, 5, 6, dead code of 37 in `EmailAnalysisService` | implementer | `J/application/management/EmailAnalysisService.java`, `EmailCategory.java`, `ApplicationManager.java`, `J/crawler/generic/utils/AIResponseParser.java`, new `J/util/LlmJson.java` | tests cover category parsing, fallback rules, failed-AI path, LlmJson on fenced/trailing-text/nested JSON | | in-progress (dispatched 22:16) |
-| T2 | C-sheets | 8, 19, 18 (sheets side, creates `ApplicationStatus`), 20, dead code of 37 in this file | implementer | `J/application/management/GoogleSheetsService.java`, new `ApplicationStatus.java`, new `J/application/management/sheets/*` | tests cover formula-injection escaping and status ranking | high (8) | in-progress (dispatched 22:16) |
-| T3 | C-crawler-core | 1, 14, 13 (crawler side), 39, 37 (except `adjustedDelay`) | implementer | `J/crawler/AbstractJobCrawler.java`, `CrawlerManager.java`, `CrawlerFactory.java`, `JobCrawlerApp.java`, `PageVisualizer.java`, `J/crawler/generic/GenericCrawler.java`, `J/App.java`, `create-file-structure.js` | tests cover folder-name collision logic and factory | | in-progress (dispatched 22:16) |
-| T4 | C-ai | 2, 12, 35, AiService side of 13 | implementer | `J/service/ai/*.java`, `J/websearch/*.java` | tests cover request building per model (no temperature for GPT-5 family, max tokens honoured), timeout/retry with a fake client, log redaction | | in-progress (dispatched 22:16) |
-| T5 | C-generic | 10, 25, 26 (not 9) | implementer | `J/crawler/generic/FormAnalyzer.java`, `FormFiller.java`, `FieldHandler.java`, `J/crawler/FormField.java`, `J/crawler/generic/utils/FieldExtractor.java`, `J/crawler/form/FormCrawler.java`, new `J/crawler/form/FieldClassifier.java`, new `LabelResolver` | tests cover classifier and label/selector building | | in-progress (dispatched 22:16) |
-| T6 | C-data | 23, 7, 17, 22 | implementer | `J/application/management/JobApplicationData.java`, `DataStorage.java`, `GmailService.java`, `ApplicationConfig.java` | tests cover storage round trip, CSV export escaping, config env fallback and validation | high (7) | in-progress (dispatched 22:16) |
-| T7 | C-cvgen | 11, 27 | implementer | `J/CVGenerator.java`, `J/JobDataFetcher.java`, `J/TemplateLoader.java`, `src/test/resources/cvgen/*` | tests cover filename sanitising, process timeout handling, job-page parsing from saved HTML | | in-progress (dispatched 22:16) |
-| T8 | C-config | 15, 16 | implementer | `J/configuration/ConfigManager.java`, `CrawlerConfig.java`, `configuration/*.properties` | tests cover typo/malformed values and defaults | high (16) | in-progress (dispatched 22:16) |
-| T9 | C-reed | 24 | implementer | `J/crawler/reed/*.java`, new `J/crawler/CrawlDelays.java` | tests cover card indexing and delay computation | | in-progress (dispatched 22:16) |
-| T10 | C-build + C-docs | 28, 29, 30 | implementer | `pom.xml`, `.github/workflows/ci.yml`, `README.md`, `.env.example` | `mvn -q package` builds a runnable jar; README commands match | | in-progress (dispatched 22:16) |
-| T11 | C-ext | 34, 31, 33, 32 | implementer | `auto-apply-plugin/*` | `node --test auto-apply-plugin/` passes | high (32) | in-progress (dispatched 22:16) |
-| T12 | C-misc | 38 | worker | `gitinfo.py` | `python3 -m py_compile gitinfo.py` | | in-progress (dispatched 22:16) |
+| T1 | C-email | 3, 4, 5, 6, dead code of 37 in `EmailAnalysisService` | implementer | `J/application/management/EmailAnalysisService.java`, `EmailCategory.java`, `ApplicationManager.java`, `J/crawler/generic/utils/AIResponseParser.java`, new `J/util/LlmJson.java` | tests cover category parsing, fallback rules, failed-AI path, LlmJson on fenced/trailing-text/nested JSON | | done (merged 23:09) |
+| T2 | C-sheets | 8, 19, 18 (sheets side, creates `ApplicationStatus`), 20, dead code of 37 in this file | implementer | `J/application/management/GoogleSheetsService.java`, new `ApplicationStatus.java`, new `J/application/management/sheets/*` | tests cover formula-injection escaping and status ranking | high (8) | done (merged 23:09) |
+| T3 | C-crawler-core | 1, 14, 13 (crawler side), 39, 37 (except `adjustedDelay`) | implementer | `J/crawler/AbstractJobCrawler.java`, `CrawlerManager.java`, `CrawlerFactory.java`, `JobCrawlerApp.java`, `PageVisualizer.java`, `J/crawler/generic/GenericCrawler.java`, `J/App.java`, `create-file-structure.js` | tests cover folder-name collision logic and factory | | done (merged 23:09) |
+| T4 | C-ai | 2, 12, 35, AiService side of 13 | implementer | `J/service/ai/*.java`, `J/websearch/*.java` | tests cover request building per model (no temperature for GPT-5 family, max tokens honoured), timeout/retry with a fake client, log redaction | | done (merged 23:09) |
+| T5 | C-generic | 10, 25, 26 (not 9) | implementer | `J/crawler/generic/FormAnalyzer.java`, `FormFiller.java`, `FieldHandler.java`, `J/crawler/FormField.java`, `J/crawler/generic/utils/FieldExtractor.java`, `J/crawler/form/FormCrawler.java`, new `J/crawler/form/FieldClassifier.java`, new `LabelResolver` | tests cover classifier and label/selector building | | done (merged 23:09) |
+| T6 | C-data | 23, 7, 17, 22 | implementer | `J/application/management/JobApplicationData.java`, `DataStorage.java`, `GmailService.java`, `ApplicationConfig.java` | tests cover storage round trip, CSV export escaping, config env fallback and validation | high (7) | done (merged 23:09) |
+| T7 | C-cvgen | 11, 27 | implementer | `J/CVGenerator.java`, `J/JobDataFetcher.java`, `J/TemplateLoader.java`, `src/test/resources/cvgen/*` | tests cover filename sanitising, process timeout handling, job-page parsing from saved HTML | | done (merged 23:09) |
+| T8 | C-config | 15, 16 | implementer | `J/configuration/ConfigManager.java`, `CrawlerConfig.java`, `configuration/*.properties` | tests cover typo/malformed values and defaults | high (16) | done (merged 23:09) |
+| T9 | C-reed | 24 | implementer | `J/crawler/reed/*.java`, new `J/crawler/CrawlDelays.java` | tests cover card indexing and delay computation | | done (merged 23:09) |
+| T10 | C-build + C-docs | 28, 29, 30 | implementer | `pom.xml`, `.github/workflows/ci.yml`, `README.md`, `.env.example` | `mvn -q package` builds a runnable jar; README commands match | | done (merged 23:09) |
+| T11 | C-ext | 34, 31, 33, 32 | implementer | `auto-apply-plugin/*` | `node --test auto-apply-plugin/` passes | high (32) | done (merged 23:09) |
+| T12 | C-misc | 38 | worker | `gitinfo.py` | `python3 -m py_compile gitinfo.py` | | done (merged 23:09) |
 
-## Wave 2 (after wave 1 is merged)
+## Wave 2 (dispatched 23:14, parallel, disjoint files, each in its own worktree)
 
-| ID | Task | Tier | Files owned | Depends on | Risk | Status |
-|---|---|---|---|---|---|---|
-| T13 | Item 9: pass applicant data into AI form filling, add `shutdown()`, wire `GenericCrawler` | implementer | C-generic files + `GenericCrawler.java` | T3, T5 | | todo |
-| T14 | Item 36: Reed selectors configurable, act on or delete unused crawler settings; `adjustedDelay` part of 37 | implementer | C-reed files + `CrawlerConfig.java`, `reedcrawler.properties` | T8, T9 | | todo |
-| T15 | Item 21: narrow OAuth scopes, single `GoogleAuthProvider` | implementer | `GmailService.java`, `GoogleSheetsService.java`, new `GoogleAuthProvider.java` | T2, T6 | high | todo |
-| T16 | Item 18 (`ApplicationManager` side) and wiring item 12 options into `CVGenerator` | worker | `ApplicationManager.java`, `CVGenerator.java` | T1, T2, T4, T7 | | todo |
-| T17 | Review of high-risk work: items 7, 8, 16, 32 (and 21 when done) | reviewer | read-only | T2, T6, T8, T11 | | todo |
+| ID | Task | Tier | Files owned | Risk | Status |
+|---|---|---|---|---|---|
+| T13 | Item 9: pass applicant data into AI form filling, add `shutdown()`, make `GenericCrawler` use it and the new `LabelResolver`/`FieldClassifier` where they apply | implementer | `J/crawler/generic/**`, `J/crawler/FormField.java`, `J/crawler/form/**`, `J/crawler/LabelResolver.java` | | in-progress |
+| T14 | Item 36: Reed selectors configurable; act on or delete unused crawler settings; `adjustedDelay` part of 37; use `CrawlDelays` in `AbstractJobCrawler` | implementer | `J/crawler/reed/**`, `J/crawler/CrawlDelays.java`, `J/crawler/AbstractJobCrawler.java`, `J/configuration/CrawlerConfig.java`, `configuration/reedcrawler.properties` | | in-progress |
+| T15 | Item 21: narrow OAuth scopes, one `GoogleAuthProvider`; token store location documented | implementer | `J/application/management/GmailService.java`, `GoogleSheetsService.java`, new `GoogleAuthProvider.java` | high | in-progress |
+| T16 | Item 18 `ApplicationManager` side (use `ApplicationStatus`); wire `AiService` options (item 12) and a configurable LaTeX timeout into `CVGenerator`; fix `extractTextFromHtml` (script/style patterns lack DOTALL) | implementer | `J/application/management/ApplicationManager.java`, `EmailAnalysisService.java`, `J/CVGenerator.java`, `J/JobDataFetcher.java` | | in-progress |
+| T17a | Review items 7 (data store) and 8 (formula injection) | reviewer | read-only, writes `reports/review-data-sheets.md` | | in-progress |
+| T17b | Review items 16 (Chromium flags) and 32 (extension API key) | reviewer | read-only, writes `reports/review-config-ext.md` | | in-progress |
+| T18 | Build hygiene: `.gitignore` entries (`__pycache__/`, `github_skills_analyzer.log`), JaCoCo report in `mvn verify` (no thresholds), README test section | worker | `.gitignore`, `pom.xml`, `README.md` | | in-progress |
+| T19 | Integration audit of the merged wave 1 (`ccc0ca0..HEAD`): cross-cluster seams, unused new helpers, README vs code, behaviour regressions | reviewer | read-only, writes `reports/integration-audit.md` | | in-progress |
 
-## Wave 3 (time permitting)
+## Wave 3 (planned after wave 2 reports)
 
-Fix reviewer findings, then a second audit pass over the merged tree for regressions and remaining
-gaps, test-coverage top-up for untested pure logic, and a final full `mvn -q verify` plus
-`node --test` run. Planned in detail after wave 2.
+Fix findings from T17a, T17b and T19; final `mvn -q verify`, `node --test auto-apply-plugin/`,
+`python3 -m py_compile gitinfo.py`; final update of `SWARM_REPORT.md`.
 
 ## Model routing for this session
 
