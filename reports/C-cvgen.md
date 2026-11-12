@@ -59,3 +59,62 @@ tests in `src/test/java/com/cvmaker/`, fixtures in `src/test/resources/cvgen/`.
 ### Left / not done
 - No real `pdflatex` run here (not installed); the real path differs only in the command name.
 - Timeout is not configurable yet (see above).
+
+## Item 27: Job-URL mode generates a CV for a fake job
+
+### What was wrong
+- `fetchFromUrl` was a stub returning "Software Engineer" at "Tech Company" with the description
+  "Job description from URL: <url>", so `input.job.url` produced a CV for a made-up job.
+- `isFilePath` mixed `||` and `&&` without parentheses, NPE'd on null, and sent any non-existent
+  name without a slash (for example `job.txt`) to the URL stub.
+- The `URI uri` variable was unused; `JobData.generateJobName` gave `null_null` for null fields.
+
+### What changed (`J/JobDataFetcher.java`)
+- Routing: `fetchJobData` rejects null/blank, treats only absolute `http(s)` URLs with a host as URLs
+  (`isHttpUrl`), and everything else as a file path ("File not found" if missing).
+- Network seam: public `PageFetcher` interface and a new public `JobDataFetcher(PageFetcher)`
+  constructor (additive; the no-arg constructor still exists and uses `HttpPageFetcher`).
+  `HttpPageFetcher` uses `java.net.http` with 15 s connect / 30 s request timeouts, follows
+  redirects, sends a browser-like User-Agent, requires a 2xx, and restores the interrupt flag.
+- Parsing (`parseJobPage(html, url)`, jsoup + Jackson): JSON-LD `JobPosting` first (top-level object,
+  array or `@graph`; `@type` as string, array or schema.org URL; malformed blocks skipped; title,
+  `hiringOrganization` object or string, `jobLocation` address, entity-escaped HTML description).
+  Then microdata (`itemprop=title`, `hiringOrganization name`), then `og:title` / `<title>` / `<h1>`
+  split on `|`, `-`, en and em dashes and " at ", dropping a trailing segment that names the site
+  (`og:site_name` or a URL host label). Description falls back to `[itemprop=description]`, common
+  job-description ids/classes, `article`, `main`, then the body, after removing scripts, styles,
+  nav, header, footer and forms. HTML becomes text with line breaks for paragraphs, `<br>` and
+  list items ("- " prefix); capped at 20 000 characters.
+- If no description of at least 80 characters is found (JS-only page, login wall), it throws an
+  `IOException` that tells the user to save the text and use `input.job.description.file`, instead
+  of generating a CV. Missing title or company become "Unknown Position" / "Unknown Company".
+- The description passed to the AI starts with `Title:`, `Company:`, optional `Location:` and
+  `Source:` lines, then the text.
+- `JobData.generateJobName` (now package-private static, same output for ordinary names) is
+  null-safe, collapses repeated underscores, trims leading/trailing `_`/`-`, cuts at 50 characters
+  without a trailing separator, and returns `job` when nothing is left. `JobData.toString` added.
+- File mode (`extractJobTitle`/`extractCompanyName` and their defaults) is unchanged.
+- Jackson (`com.fasterxml.jackson.databind`) is used for JSON-LD because it is already imported
+  elsewhere and item 28 plans to declare it; `org.json` was avoided since item 28 may remove it.
+  `pom.xml` was not touched.
+
+### Verification
+`src/test/java/com/cvmaker/JobDataFetcherTest.java` (15 tests, offline) with fixtures in
+`src/test/resources/cvgen/`:
+- `jobposting-jsonld.html`: `@graph`, array `@type`, a malformed JSON-LD block, escaped HTML
+  description, location; checks title, company, folder name, list formatting, no page chrome.
+- `og-title-only.html`: "Data Engineer at Contoso Health | Indeed.com" title split, description
+  taken from `#job-description` only (no script, style or sidebar text).
+- `js-shell.html`: rejected with a clear error.
+- Inline HTML: microdata, top-level JSON-LD array with a string organization, placeholders,
+  truncation, `splitPageTitle`, `htmlToText`.
+- Routing with a fake `PageFetcher`: URL goes to the fetcher (the old stub's fake job is gone),
+  fetch errors propagate, null/blank rejected, `isHttpUrl` cases, a temp file is read from disk,
+  and a missing `no-such-job-file.txt` is a "File not found" error, not a URL fetch.
+- Folder-name sanitising: traversal, nulls, symbols-only, long names.
+
+### Left / not done
+- No live fetch was run (no network to job sites here). Many boards (LinkedIn, Indeed) need
+  JavaScript or block plain HTTP clients; for those the user gets the error above. A Playwright
+  fallback could reuse `parseJobPage` on the rendered HTML.
+- `TemplateLoader.java` needed no change for these items.
