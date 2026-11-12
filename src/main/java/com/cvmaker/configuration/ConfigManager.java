@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 
 import com.cvmaker.service.ai.LLMModel;
@@ -20,6 +21,11 @@ public class ConfigManager {
 
     private static final String DEFAULT_CONFIG_FILE = "configuration/config.properties";
 
+    /** Default AI temperature, also used when the configured value is malformed or out of range. */
+    static final double DEFAULT_AI_TEMPERATURE = 0.3;
+    /** OpenAI accepts temperatures from 0 to 2. */
+    static final double MAX_AI_TEMPERATURE = 2.0;
+
     // Template settings
     private String templateName;
     private String templateDirectory;
@@ -31,10 +37,15 @@ public class ConfigManager {
     private String cvPromptFile;
     private String coverLetterPromptFile;
 
-    // Content (loaded from files)
+    // Content (loaded from files). Excluded from toString so logging the config never prints the
+    // user's CV or prompts.
+    @ToString.Exclude
     private String userDataContent;
+    @ToString.Exclude
     private String jobDescriptionContent;
+    @ToString.Exclude
     private String cvPromptContent;
+    @ToString.Exclude
     private String coverLetterPromptContent;
 
     // Output settings
@@ -75,7 +86,7 @@ public class ConfigManager {
         setDefaults();
 
         // Set provided values
-        this.jobUrl = jobUrl;
+        this.jobUrl = jobUrl == null ? "" : jobUrl.trim();
         this.userDataFile = userDataFile;
         this.cvPromptFile = cvPromptFile;
         this.coverLetterPromptFile = coverLetterPromptFile;
@@ -106,7 +117,7 @@ public class ConfigManager {
 
         // AI defaults
         this.aiModel = LLMModel.GPT_4_1_MINI;
-        this.aiTemperature = 0.3;
+        this.aiTemperature = DEFAULT_AI_TEMPERATURE;
         this.aiRequestDelayMs = 1000;
         this.aiMaxRetries = 3;
         this.aiTimeoutSeconds = 60;
@@ -153,67 +164,58 @@ public class ConfigManager {
     }
 
     private void loadTemplateSettings(Properties properties) {
-        this.templateName = properties.getProperty("template.name", this.templateName);
-        this.templateDirectory = properties.getProperty("template.directory", this.templateDirectory);
+        this.templateName = TypedProperties.stringProp(properties, "template.name", this.templateName);
+        this.templateDirectory = TypedProperties.stringProp(properties, "template.directory", this.templateDirectory);
     }
 
     private void loadInputSettings(Properties properties) {
-        this.userDataFile = properties.getProperty("input.user.data.file", this.userDataFile);
-        this.jobUrl = properties.getProperty("input.job.url", this.jobUrl).trim();
-        this.jobDescriptionFile = properties.getProperty("input.job.description.file", this.jobDescriptionFile).trim();
-        this.cvPromptFile = properties.getProperty("input.cv.prompt.file", this.cvPromptFile);
-        this.coverLetterPromptFile = properties.getProperty("input.cover.letter.prompt.file", this.coverLetterPromptFile);
+        this.userDataFile = TypedProperties.stringProp(properties, "input.user.data.file", this.userDataFile);
+        this.jobUrl = TypedProperties.stringProp(properties, "input.job.url", this.jobUrl);
+        this.jobDescriptionFile = TypedProperties.stringProp(properties, "input.job.description.file", this.jobDescriptionFile);
+        this.cvPromptFile = TypedProperties.stringProp(properties, "input.cv.prompt.file", this.cvPromptFile);
+        this.coverLetterPromptFile = TypedProperties.stringProp(properties, "input.cover.letter.prompt.file", this.coverLetterPromptFile);
     }
 
     private void loadOutputSettings(Properties properties) {
-        this.outputDirectory = properties.getProperty("output.directory", this.outputDirectory);
-        this.outputPdfName = properties.getProperty("output.pdf.name", this.outputPdfName);
-        this.coverLetterPdfName = properties.getProperty("output.cover.letter.pdf.name", this.coverLetterPdfName);
-        this.cvTexFilename = properties.getProperty("output.cv.tex.filename", this.cvTexFilename);
-        this.coverLetterTexFilename = properties.getProperty("output.cover.letter.tex.filename", this.coverLetterTexFilename);
-        this.generateCoverLetter = Boolean.parseBoolean(properties.getProperty("output.generate.cover.letter", String.valueOf(this.generateCoverLetter)));
+        this.outputDirectory = TypedProperties.stringProp(properties, "output.directory", this.outputDirectory);
+        this.outputPdfName = TypedProperties.stringProp(properties, "output.pdf.name", this.outputPdfName);
+        this.coverLetterPdfName = TypedProperties.stringProp(properties, "output.cover.letter.pdf.name", this.coverLetterPdfName);
+        this.cvTexFilename = TypedProperties.stringProp(properties, "output.cv.tex.filename", this.cvTexFilename);
+        this.coverLetterTexFilename = TypedProperties.stringProp(properties, "output.cover.letter.tex.filename", this.coverLetterTexFilename);
+        this.generateCoverLetter = TypedProperties.boolProp(properties, "output.generate.cover.letter", this.generateCoverLetter);
     }
 
     private void loadAiSettings(Properties properties) {
-        String modelName = properties.getProperty("ai.model", this.aiModel.toString());
-        try {
-            this.aiModel = LLMModel.valueOf(modelName);
-        } catch (IllegalArgumentException e) {
-            System.out.println("Warning: Invalid AI model '" + modelName + "', using default " + this.aiModel);
+        String modelName = properties.getProperty("ai.model");
+        if (modelName != null) {
+            String normalized = modelName.trim().toUpperCase(Locale.ROOT);
+            try {
+                this.aiModel = LLMModel.valueOf(normalized);
+            } catch (IllegalArgumentException e) {
+                System.out.println("Warning: Invalid AI model '" + modelName.trim() + "', using default " + this.aiModel);
+            }
         }
 
-        try {
-            this.aiTemperature = Double.parseDouble(properties.getProperty("ai.temperature", String.valueOf(this.aiTemperature)));
-            if (this.aiTemperature < 0.0 || this.aiTemperature > 1.0) {
-                System.out.println("Warning: AI temperature should be between 0.0 and 1.0, using " + this.aiTemperature);
-                this.aiTemperature = 0.3;
-            }
-        } catch (NumberFormatException e) {
-            System.out.println("Warning: Invalid AI temperature value, using " + this.aiTemperature);
-        }
+        this.aiTemperature = TypedProperties.doubleProp(properties, "ai.temperature",
+                DEFAULT_AI_TEMPERATURE, 0.0, MAX_AI_TEMPERATURE);
     }
 
     private void loadDebugSettings(Properties properties) {
-        this.saveGeneratedLatex = Boolean.parseBoolean(properties.getProperty("debug.save.generated.latex", String.valueOf(this.saveGeneratedLatex)));
-        this.saveAiResponses = Boolean.parseBoolean(properties.getProperty("debug.save.ai.responses", String.valueOf(this.saveAiResponses)));
+        this.saveGeneratedLatex = TypedProperties.boolProp(properties, "debug.save.generated.latex", this.saveGeneratedLatex);
+        this.saveAiResponses = TypedProperties.boolProp(properties, "debug.save.ai.responses", this.saveAiResponses);
     }
 
     private void loadPerformanceSettings(Properties properties) {
-        this.aiRequestDelayMs = Integer.parseInt(properties.getProperty("ai.request_delay_ms", String.valueOf(this.aiRequestDelayMs)));
-        this.aiMaxRetries = Integer.parseInt(properties.getProperty("ai.max_retries", String.valueOf(this.aiMaxRetries)));
-        this.aiTimeoutSeconds = Integer.parseInt(properties.getProperty("ai.timeout_seconds", String.valueOf(this.aiTimeoutSeconds)));
+        this.aiRequestDelayMs = TypedProperties.intProp(properties, "ai.request_delay_ms", this.aiRequestDelayMs, 0);
+        this.aiMaxRetries = TypedProperties.intProp(properties, "ai.max_retries", this.aiMaxRetries, 0);
+        this.aiTimeoutSeconds = TypedProperties.intProp(properties, "ai.timeout_seconds", this.aiTimeoutSeconds, 1);
     }
 
     private void loadLatexSettings(Properties properties) {
-        this.latexCompiler = properties.getProperty("latex.compiler", this.latexCompiler);
-
-        String compilerArgsStr = properties.getProperty("latex.compiler.args", String.join(",", this.latexCompilerArgs));
-        this.latexCompilerArgs = Arrays.asList(compilerArgsStr.split(","));
-
-        String cleanupExtStr = properties.getProperty("latex.cleanup.extensions", String.join(",", this.cleanupExtensions));
-        this.cleanupExtensions = Arrays.asList(cleanupExtStr.split(","));
-
-        this.progressReportInterval = Integer.parseInt(properties.getProperty("latex.progress.report.interval", String.valueOf(this.progressReportInterval)));
+        this.latexCompiler = TypedProperties.stringProp(properties, "latex.compiler", this.latexCompiler);
+        this.latexCompilerArgs = TypedProperties.listProp(properties, "latex.compiler.args", this.latexCompilerArgs);
+        this.cleanupExtensions = TypedProperties.listProp(properties, "latex.cleanup.extensions", this.cleanupExtensions);
+        this.progressReportInterval = TypedProperties.intProp(properties, "latex.progress.report.interval", this.progressReportInterval, 1);
     }
 
     private void loadFileContents() throws IOException {
@@ -221,9 +223,10 @@ public class ConfigManager {
         this.userDataContent = loadFileContent(userDataFile, "User data file");
 
         // Load job description content if file exists (skip if using URL)
-        if (!jobDescriptionFile.isEmpty() && jobUrl.isEmpty()) {
+        // (never left null: empty when there is neither a file nor a URL)
+        if (jobDescriptionFile != null && !jobDescriptionFile.isEmpty() && !hasJobUrl()) {
             this.jobDescriptionContent = loadFileContentOptional(jobDescriptionFile, "Job description file");
-        } else if (!jobUrl.isEmpty()) {
+        } else {
             this.jobDescriptionContent = "";
         }
 
