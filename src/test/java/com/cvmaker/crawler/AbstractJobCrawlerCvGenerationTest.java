@@ -136,6 +136,30 @@ class AbstractJobCrawlerCvGenerationTest {
     }
 
     @Test
+    void twoJobsWithTheSameTitleKeepSeparateCvs() throws Exception {
+        generatorWritesPdf();
+
+        Path first = crawler.generateCVForJob(new JobInfo("Java Developer", "Agency"), "Fintech client in Leeds.");
+        Path second = crawler.generateCVForJob(new JobInfo("Java Developer", "Agency"), "Retail client in York.");
+
+        assertThat(first).isNotNull().exists();
+        assertThat(second).isNotNull().exists();
+        // The second CV used to overwrite the first one.
+        assertThat(second).isNotEqualTo(first);
+        assertThat(second.getParent()).isNotEqualTo(first.getParent());
+    }
+
+    @Test
+    void jobWithoutATitleStillGetsACv() throws Exception {
+        generatorWritesPdf();
+
+        Path cv = crawler.generateCVForJob(new JobInfo(null, null), "Some description.");
+
+        assertThat(cv).isNotNull().exists();
+        assertThat(cv.getParent().getFileName().toString()).startsWith("Job-untitled_");
+    }
+
+    @Test
     void emptyJobContentSkipsGenerationWithoutCreatingAGenerator() {
         assertThat(crawler.generateCVForJob(new JobInfo("Java Developer", "Acme"), "  ")).isNull();
         assertThat(crawler.generateCVForJob(new JobInfo("Java Developer", "Acme"), null)).isNull();

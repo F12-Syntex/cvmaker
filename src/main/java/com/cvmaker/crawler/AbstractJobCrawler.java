@@ -219,28 +219,17 @@ public abstract class AbstractJobCrawler implements JobCrawler {
 
     protected Path generateCVForJob(JobInfo job, String jobContent) {
         try {
-            System.out.println("Generating CV for: " + job.getTitle() + " at " + job.getCompany());
+            System.out.println("Generating CV for: " + (job == null ? null : job.getTitle())
+                    + " at " + (job == null ? null : job.getCompany()));
 
             if (jobContent == null || jobContent.trim().isEmpty()) {
                 System.out.println("No job content found, skipping CV generation");
                 return null;
             }
 
-            // Create unique job folder
-            String title = job.getTitle();
-            // Remove everything after the 5th space
-            String[] parts = title.split(" ");
-            if (parts.length > 5) {
-                title = String.join(" ", Arrays.copyOfRange(parts, 0, 5));
-            }
-            // Remove everything before the first '.'
-            int dotIndex = title.indexOf('.');
-            if (dotIndex != -1) {
-                title = title.substring(dotIndex + 1).trim();
-            }
-            String uuid = "Job-" + title.replaceAll("[^a-zA-Z0-9-_ ]", "").replaceAll("\\s+", "_");
-            String jobFolder = config.getOutputDirectory() + "/" + uuid;
-            Path jobFolderPath = Paths.get(jobFolder);
+            // One folder per job: title and company for readability, plus a hash
+            // so that two jobs with the same title do not overwrite each other.
+            Path jobFolderPath = Paths.get(config.getOutputDirectory(), JobFolderNamer.folderName(job, jobContent));
             Files.createDirectories(jobFolderPath);
 
             // Create config for this specific job
