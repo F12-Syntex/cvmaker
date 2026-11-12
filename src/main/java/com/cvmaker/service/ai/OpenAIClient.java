@@ -1,6 +1,9 @@
 package com.cvmaker.service.ai;
 
+import java.util.Objects;
+
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.errors.OpenAIServiceException;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 
@@ -10,38 +13,122 @@ public class OpenAIClient implements LLMClient {
 
     public OpenAIClient() {
         //TODO: grab from .env file instead
-        this.client = OpenAIOkHttpClient.fromEnv();
+        this(OpenAIOkHttpClient.fromEnv());
+    }
+
+    /**
+     * Uses an already configured SDK client. This is the seam for tests, which
+     * pass a mock so that nothing reaches the network.
+     */
+    public OpenAIClient(com.openai.client.OpenAIClient client) {
+        this.client = Objects.requireNonNull(client, "client");
     }
 
     @Override
     public LLMResponse complete(LLMRequest request) {
         try {
-            ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                    .addUserMessage(request.getPrompt())
-                    .model(request.getModel())
-                    .temperature(request.getTemperature())
-                    .build();
-
+            ChatCompletionCreateParams params = buildParams(request);
             ChatCompletion completion = client.chat().completions().create(params);
-
-            var usage = completion.usage().get();
-            var responseContent = completion.choices().get(0).message().content();
-
-            if (!responseContent.isPresent()) {
-                throw new RuntimeException("Empty response from OpenAI API");
-            }
-
-            return LLMResponse.builder()
-                    .content(responseContent.get())
-                    .usage(new UsageStats(
-                            (int) usage.promptTokens(),
-                            (int) usage.completionTokens(),
-                            (int) usage.totalTokens()))
-                    .model(request.getModel())
-                    .build();
-
+            return toResponse(completion, request);
         } catch (Exception e) {
-            throw new RuntimeException("OpenAI API call failed: " + e.getMessage(), e);
+            throw new LLMException("OpenAI API call failed: " + e.getMessage(), e, isRetryable(e));
+        }
+    }
+
+    /**
+     * A request the API rejected (HTTP 4xx other than 408, 409 and 429) fails
+     * the same way every time, so it is marked as not worth retrying. So are an
+     * invalid request and an answer cut off by the token limit.
+     */
+    static boolean isRetryable(Exception e) {
+        if (e instanceof OpenAIServiceException service) {
+            return LLMException.isRetryableStatus(service.statusCode());
+        }
+        return LLMException.isRetryable(e);
+    }
+
+    /**
+     * Builds the Chat Completions request. Only parameters the model accepts
+     * are sent, as listed in {@link ModelCapabilities}: {@code temperature} is
+     * left out for models that reject it, and a token limit is sent only when
+     * the caller set one, under the field name the model expects.
+     */
+    static ChatCompletionCreateParams buildParams(LLMRequest request) {
+        if (request.getPrompt() == null) {
+            throw new IllegalArgumentException("LLM request has no prompt");
+        }
+        if (request.getModel() == null || request.getModel().isBlank()) {
+            throw new IllegalArgumentException("LLM request has no model");
+        }
+
+        ModelCapabilities capabilities = ModelCapabilities.forOpenAiModel(request.getModel());
+
+        ChatCompletionCreateParams.Builder params = ChatCompletionCreateParams.builder()
+                .addUserMessage(request.getPrompt())
+                .model(request.getModel());
+
+        if (capabilities.supportsTemperature()) {
+            params.temperature(request.getTemperature());
+        }
+
+        if (request.hasMaxTokens()) {
+            long limit = request.getMaxTokens();
+            switch (capabilities.getTokenLimitParameter()) {
+                case MAX_COMPLETION_TOKENS ->
+                    params.maxCompletionTokens(limit);
+                case MAX_TOKENS ->
+                    params.maxTokens(limit);
+            }
+        }
+
+        return params.build();
+    }
+
+    /**
+     * Maps the SDK response to an {@link LLMResponse}. A response without a
+     * usage block is valid and gives a null {@link LLMResponse#getUsage()}.
+     *
+     * @throws LLMException when the response carries no text. It is not
+     * retryable when the token limit or the content filter caused it.
+     */
+    static LLMResponse toResponse(ChatCompletion completion, LLMRequest request) {
+        if (completion.choices().isEmpty()) {
+            throw new LLMException("Empty response from OpenAI API (no choices)", true);
+        }
+
+        ChatCompletion.Choice choice = completion.choices().get(0);
+        String content = choice.message().content().orElse(null);
+
+        if (content == null || content.isBlank()) {
+            String finishReason = finishReasonOf(choice);
+            boolean cutOff = "length".equals(finishReason);
+            String hint = cutOff
+                    ? "; the token limit was used up before any text was produced, so raise or remove maxTokens"
+                    : "";
+            throw new LLMException(
+                    "Empty response from OpenAI API (finish_reason=" + finishReason + ")" + hint,
+                    !cutOff && !"content_filter".equals(finishReason));
+        }
+
+        UsageStats usage = completion.usage()
+                .map(u -> new UsageStats(
+                (int) u.promptTokens(),
+                (int) u.completionTokens(),
+                (int) u.totalTokens()))
+                .orElse(null);
+
+        return LLMResponse.builder()
+                .content(content)
+                .usage(usage)
+                .model(request.getModel())
+                .build();
+    }
+
+    private static String finishReasonOf(ChatCompletion.Choice choice) {
+        try {
+            return choice.finishReason().asString();
+        } catch (RuntimeException e) {
+            return "unknown";
         }
     }
 
