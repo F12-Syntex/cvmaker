@@ -9,7 +9,7 @@
     <version>1.0-SNAPSHOT</version>
 
     <name>cvmaker</name>
-    <url>http://www.example.com</url>
+    <url>https://github.com/F12-Syntex/cvmaker</url>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -17,6 +17,10 @@
         <junit.jupiter.version>5.11.4</junit.jupiter.version>
         <assertj.version>3.27.3</assertj.version>
         <mockito.version>5.14.2</mockito.version>
+        <lombok.version>1.18.38</lombok.version>
+        <jackson.version>2.18.2</jackson.version>
+        <!-- Main class run by `java -jar` and by `mvn exec:java`; override with -Dexec.mainClass=... -->
+        <exec.mainClass>com.cvmaker.App</exec.mainClass>
     </properties>
 
     <dependencies>
@@ -46,30 +50,22 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>itext7-core</artifactId>
-            <version>7.2.5</version>
-            <type>pom</type>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-exec</artifactId>
-            <version>1.3</version>
-        </dependency>
-        <dependency>
-            <groupId>org.json</groupId>
-            <artifactId>json</artifactId>
-            <version>20250517</version>
-        </dependency>
-        <dependency>
             <groupId>com.openai</groupId>
             <artifactId>openai-java</artifactId>
             <version>2.3.0</version>
         </dependency>
+        <!-- Imported directly (LocalLLMClient, AIResponseParser, ExaSearchClient); same version openai-java brings -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <!-- Compile-time only; also registered as an annotation processor below -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.38</version>
+            <version>${lombok.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.jsoup</groupId>
@@ -81,18 +77,6 @@
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>4.12.0</version>
-        </dependency>
-
-        <!-- Selenium WebDriver -->
-        <dependency>
-            <groupId>org.seleniumhq.selenium</groupId>
-            <artifactId>selenium-chrome-driver</artifactId>
-            <version>4.33.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.seleniumhq.selenium</groupId>
-            <artifactId>selenium-support</artifactId>
-            <version>4.33.0</version>
         </dependency>
 
         <dependency>
@@ -136,14 +120,6 @@
             <groupId>com.microsoft.playwright</groupId>
             <artifactId>playwright</artifactId>
             <version>1.52.0</version>
-        </dependency>
-
-    
-        <!-- WebDriverManager (automatically manages WebDriver binaries) -->
-        <dependency>
-            <groupId>io.github.bonigarcia</groupId>
-            <artifactId>webdrivermanager</artifactId>
-            <version>6.1.0</version>
         </dependency>
 
     </dependencies>
@@ -190,7 +166,89 @@
                     <artifactId>maven-project-info-reports-plugin</artifactId>
                     <version>3.0.0</version>
                 </plugin>
+                <plugin>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.8.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <!-- Runnable jar: target/cvmaker-1.0-SNAPSHOT.jar plus its runtime dependencies in target/lib/ -->
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-runtime-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${exec.mainClass}</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <!-- mvn exec:java runs App; -Pcrawler, -Ptracker, -Psearch pick the other entry points -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>${exec.mainClass}</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>crawler</id>
+            <properties>
+                <exec.mainClass>com.cvmaker.crawler.JobCrawlerApp</exec.mainClass>
+            </properties>
+        </profile>
+        <profile>
+            <id>tracker</id>
+            <properties>
+                <exec.mainClass>com.cvmaker.application.management.ApplicationManager</exec.mainClass>
+            </properties>
+        </profile>
+        <profile>
+            <id>search</id>
+            <properties>
+                <exec.mainClass>com.cvmaker.websearch.ExaSearchClient</exec.mainClass>
+            </properties>
+        </profile>
+    </profiles>
 </project>
