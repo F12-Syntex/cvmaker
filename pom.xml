@@ -61,6 +61,12 @@
             <version>${jackson.version}</version>
         </dependency>
         <!-- Compile-time only; also registered as an annotation processor below -->
+        <!-- Used by JobApplicationData for the JSON-lines application store -->
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20250517</version>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
