@@ -58,7 +58,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
 
     @Override
     public void setupBrowser() {
-        playwright = Playwright.create();
+        playwright = createPlaywright();
 
         try {
             Path userDataDir = Paths.get(crawlerConfig.getBrowserDataDir());
@@ -98,6 +98,14 @@ public abstract class AbstractJobCrawler implements JobCrawler {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Start the Playwright driver. Kept as a separate method so that tests can
+     * supply a mock instead of launching a real browser.
+     */
+    protected Playwright createPlaywright() {
+        return Playwright.create();
     }
 
     @Override
