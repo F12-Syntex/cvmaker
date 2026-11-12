@@ -16,7 +16,12 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.options.LoadState;
 
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 
 /**
  * Abstract base implementation for all job site crawlers. Handles common
@@ -29,6 +34,11 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     protected BrowserContext context;
     protected Page page;
 
+    // Visual feedback in the browser window. Never null: a no-op object until
+    // setupBrowser() has run, after close(), and when
+    // crawler.visualization.enabled is false, so subclasses can call it freely.
+    protected PageVisualizer visualizer = PageVisualizer.disabled();
+
     // Configuration
     protected ConfigManager config;
     protected CrawlerConfig crawlerConfig;
@@ -37,6 +47,14 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     protected int applicationsSubmitted = 0;
     protected int jobsChecked = 0;
     protected int easyApplyJobsFound = 0;
+
+    // One CV generator, and so one AI client and one executor thread, for the
+    // whole session. Created on first use, shut down in close().
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private CVGenerator cvGenerator;
 
     public AbstractJobCrawler() throws Exception {
         this(new CrawlerConfig());
@@ -56,11 +74,23 @@ public abstract class AbstractJobCrawler implements JobCrawler {
         Files.createDirectories(Paths.get(config.getOutputDirectory()));
     }
 
+    /**
+     * Launch the browser and open the main page.
+     *
+     * <p>If anything fails, whatever was already started is closed again and the
+     * exception is rethrown, so a caller never continues with a null page and
+     * the Playwright driver process is not leaked.
+     *
+     * @throws RuntimeException if the browser cannot be launched
+     */
     @Override
-    public void setupBrowser() {
-        playwright = Playwright.create();
+    public synchronized void setupBrowser() {
+        // A repeated call must not leak the browser from the previous one.
+        closeBrowser();
 
         try {
+            playwright = createPlaywright();
+
             Path userDataDir = Paths.get(crawlerConfig.getBrowserDataDir());
             this.context = playwright.chromium().launchPersistentContext(
                     userDataDir,
@@ -87,44 +117,97 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             page.setDefaultTimeout(crawlerConfig.getPageTimeout());
             page.setDefaultNavigationTimeout(crawlerConfig.getNavigationTimeout());
 
+            this.visualizer = new PageVisualizer(page, crawlerConfig.isVisualizationEnabled());
+
             // 🔹 Automatically cache the main page on load
             page.onLoad(p -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), p));
 
             // 🔹 Automatically cache *all new pages* (popups, tabs, redirects)
-            context.onPage(p -> p.onLoad(page -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), page)));
+            context.onPage(p -> p.onLoad(loaded -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), loaded)));
 
             System.out.println("Browser setup completed for " + getCrawlerName());
 
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (RuntimeException e) {
+            System.out.println("Browser setup failed for " + getCrawlerName() + ": " + e.getMessage());
+            closeBrowser();
+            throw e;
         }
+    }
+
+    /**
+     * Start the Playwright driver. Kept as a separate method so that tests can
+     * supply a mock instead of launching a real browser.
+     */
+    protected Playwright createPlaywright() {
+        return Playwright.create();
     }
 
     @Override
     public void openForLogin() {
+        if (page == null) {
+            throw new IllegalStateException("Browser is not set up; call setupBrowser() before openForLogin()");
+        }
+
         try {
             page.navigate(crawlerConfig.getBaseUrl());
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
             page.waitForTimeout(crawlerConfig.getPageLoadDelay());
 
             System.out.println("Login to " + crawlerConfig.getBaseUrl() + " if needed, then press ENTER...");
-            System.in.read();
+            visualizer.visualizeAction("Log in if needed, then press ENTER in the console");
+            // Consume the whole line, so a leftover '\n' (Windows sends "\r\n")
+            // does not answer the next prompt by itself.
+            ConsolePrompt.waitForEnter(System.in);
 
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
+    /**
+     * Release the browser and the CV generator. Safe to call more than once,
+     * before {@link #setupBrowser()}, and after a failed setup: every resource
+     * is closed in its own step, so one failing close does not leak the others.
+     */
     @Override
-    public void close() {
-        if (page != null) {
-            page.close();
+    public synchronized void close() {
+        closeBrowser();
+
+        CVGenerator generator = cvGenerator;
+        cvGenerator = null;
+        if (generator != null) {
+            try {
+                generator.shutdown();
+            } catch (Exception e) {
+                System.out.println("Error shutting down CV generator for " + getCrawlerName() + ": " + e.getMessage());
+            }
         }
-        if (context != null) {
-            context.close();
+    }
+
+    private void closeBrowser() {
+        Page oldPage = page;
+        BrowserContext oldContext = context;
+        Playwright oldPlaywright = playwright;
+
+        // Clear the fields first: a second close() then has nothing to do.
+        page = null;
+        context = null;
+        playwright = null;
+        visualizer = PageVisualizer.disabled();
+
+        closeQuietly("page", oldPage);
+        closeQuietly("browser context", oldContext);
+        closeQuietly("Playwright", oldPlaywright);
+    }
+
+    private void closeQuietly(String what, AutoCloseable resource) {
+        if (resource == null) {
+            return;
         }
-        if (playwright != null) {
-            playwright.close();
+        try {
+            resource.close();
+        } catch (Exception e) {
+            System.out.println("Error closing " + what + " for " + getCrawlerName() + ": " + e.getMessage());
         }
     }
 
@@ -145,46 +228,35 @@ public abstract class AbstractJobCrawler implements JobCrawler {
 
     protected Path generateCVForJob(JobInfo job, String jobContent) {
         try {
-            System.out.println("Generating CV for: " + job.getTitle() + " at " + job.getCompany());
+            System.out.println("Generating CV for: " + (job == null ? null : job.getTitle())
+                    + " at " + (job == null ? null : job.getCompany()));
 
             if (jobContent == null || jobContent.trim().isEmpty()) {
                 System.out.println("No job content found, skipping CV generation");
                 return null;
             }
 
-            // Create unique job folder
-            String title = job.getTitle();
-            // Remove everything after the 5th space
-            String[] parts = title.split(" ");
-            if (parts.length > 5) {
-                title = String.join(" ", Arrays.copyOfRange(parts, 0, 5));
-            }
-            // Remove everything before the first '.'
-            int dotIndex = title.indexOf('.');
-            if (dotIndex != -1) {
-                title = title.substring(dotIndex + 1).trim();
-            }
-            String uuid = "Job-" + title.replaceAll("[^a-zA-Z0-9-_ ]", "").replaceAll("\\s+", "_");
-            String jobFolder = config.getOutputDirectory() + "/" + uuid;
-            Path jobFolderPath = Paths.get(jobFolder);
+            // One folder per job: title and company for readability, plus a hash
+            // so that two jobs with the same title do not overwrite each other.
+            Path jobFolderPath = Paths.get(config.getOutputDirectory(), JobFolderNamer.folderName(job, jobContent));
             Files.createDirectories(jobFolderPath);
+            visualizer.visualizeAction("Generating CV: " + (job == null ? null : job.getTitle()));
 
             // Create config for this specific job
             config.setJobDescriptionContent(jobContent);
 
-            // Generate CV using the simplified CVGenerator
-            CVGenerator generator = new CVGenerator(config);
+            // Generate CV with the session's CVGenerator (shut down in close())
+            CVGenerator generator = cvGenerator();
 
-            // Temporarily update config output directory
+            // Temporarily point the output directory at the job folder, and
+            // always restore it: a failed job must not redirect the next ones.
             String originalOutputDir = config.getOutputDirectory();
             config.setOutputDirectory(jobFolderPath.toString());
-
-            generator.generate();
-
-            // Restore original output directory
-            config.setOutputDirectory(originalOutputDir);
-
-            generator.shutdown();
+            try {
+                generator.generate();
+            } finally {
+                config.setOutputDirectory(originalOutputDir);
+            }
 
             Path cvPath = jobFolderPath.resolve(config.getOutputPdfName());
             if (Files.exists(cvPath)) {
@@ -200,6 +272,21 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             e.printStackTrace();
             return null;
         }
+    }
+
+    /**
+     * Build the CV generator for this crawler. Called at most once per session
+     * (again only after {@link #close()}). Overridable for tests.
+     */
+    protected CVGenerator createCvGenerator() {
+        return new CVGenerator(config);
+    }
+
+    private synchronized CVGenerator cvGenerator() {
+        if (cvGenerator == null) {
+            cvGenerator = createCvGenerator();
+        }
+        return cvGenerator;
     }
 
     protected int adjustedDelay(int baseDelay) {

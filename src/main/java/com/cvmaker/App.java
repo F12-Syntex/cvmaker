@@ -20,17 +20,26 @@ public class App {
         long startTime = System.currentTimeMillis();
 
         ConfigManager config = new ConfigManager();
-        CVGenerator generator = new CVGenerator(config);
-
-        generator.generate();
+        runGeneration(new CVGenerator(config));
 
         long endTime = System.currentTimeMillis();
-
-        generator.shutdown();
 
         System.out.println();
         System.out.println("=== Generation Complete ===");
         System.out.println("Total time: " + formatDuration(endTime - startTime));
+    }
+
+    /**
+     * Run one generation and always shut the generator down afterwards, also
+     * when generation fails: its AI executor thread is not a daemon thread and
+     * would otherwise keep running.
+     */
+    static void runGeneration(CVGenerator generator) throws Exception {
+        try {
+            generator.generate();
+        } finally {
+            generator.shutdown();
+        }
     }
 
     /**
