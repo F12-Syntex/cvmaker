@@ -35,9 +35,10 @@ test('context menu click without configuration shows a notification and handles 
 });
 
 test('the "LinkedIn loaded" notice to a closed popup does not leave a rejected promise', async () => {
-  const { chrome } = loadBackground();
+  const { chrome } = loadBackground({ session: { jobSearch: { tabId: 5, started: false, jobTitle: 'x', maxPages: 1 } } });
   chrome.tabs.onUpdated.fire(5, { status: 'complete' }, { id: 5, url: 'https://www.linkedin.com/jobs/search/?keywords=x' });
   await flush();
   const notices = chrome.calls.runtimeMessages.filter(r => r.message.action === 'linkedinLoaded');
+  assert.ok(notices.length > 0);
   for (const record of notices) assert.equal(record.handled, true, 'rejection handled');
 });

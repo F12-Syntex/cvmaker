@@ -183,7 +183,60 @@ Scraped: ${new Date(job.scraped).toLocaleString()}
     return header + jobsText;
   }
 
+  const MAX_SEARCH_PAGES = 25;
+  const DEFAULT_SEARCH_PAGES = 5;
+
+  // Cleans the popup's search request; every field may be missing or of the wrong type.
+  function normalizeSearchRequest(request) {
+    const r = request || {};
+    const params = r.params || r;
+    const text = (value, max) => (typeof value === 'string' ? value.trim().substring(0, max) : '');
+    const pages = parseInt(r.maxPages, 10);
+    return {
+      jobTitle: text(params.jobTitle, 200) || 'Software Engineer',
+      location: text(params.location, 200),
+      experienceLevel: text(params.experienceLevel, 20),
+      maxPages: Number.isFinite(pages) ? Math.min(Math.max(pages, 1), MAX_SEARCH_PAGES) : DEFAULT_SEARCH_PAGES
+    };
+  }
+
+  // A search waits for its LinkedIn tab to finish loading; then scraping starts exactly once.
+  function shouldStartScraping(search, tabId, changeInfo) {
+    return Boolean(
+      search &&
+      !search.started &&
+      search.tabId === tabId &&
+      changeInfo &&
+      changeInfo.status === 'complete'
+    );
+  }
+
+  function buildJobsFilename(jobTitle, date) {
+    const day = (date || new Date()).toISOString().split('T')[0];
+    const safeTitle = String(jobTitle === undefined || jobTitle === null ? '' : jobTitle)
+      .replace(/[^a-z0-9]+/gi, '_')
+      .replace(/^_+|_+$/g, '')
+      .substring(0, 60) || 'search';
+    return `linkedin_jobs_${safeTitle}_${day}.txt`;
+  }
+
+  // Data URL for a text download. The service worker cannot create blob URLs, and a data URL
+  // leaves nothing to revoke.
+  function textToDataUrl(text) {
+    const bytes = new TextEncoder().encode(String(text));
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return `data:text/plain;charset=utf-8;base64,${btoa(binary)}`;
+  }
+
   const api = {
+    normalizeSearchRequest,
+    shouldStartScraping,
+    buildJobsFilename,
+    textToDataUrl,
     normalizeFieldText,
     determineFieldType,
     buildFieldContext,

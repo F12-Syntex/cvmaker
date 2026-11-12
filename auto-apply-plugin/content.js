@@ -1,6 +1,7 @@
 // Store the last right-clicked element
 let lastClickedElement = null;
 let isSearching = false;
+let stopRequested = false;
 let searchData = {
   jobs: [],
   currentPage: 1,
@@ -112,15 +113,18 @@ function isInputField(element) {
 
 // LinkedIn job scraping functionality
 async function startLinkedInScraping(maxPages, jobTitle, location) {
-    if (isSearching) return;
-    
+    if (isSearching) return { success: false, error: 'A search is already running in this tab' };
+
+    // Parameters come from a message and may be missing.
+    const params = AutoApplyLib.normalizeSearchRequest({ maxPages, params: { jobTitle, location } });
     isSearching = true;
+    stopRequested = false;
     searchData = {
         jobs: [],
         currentPage: 1,
-        maxPages: maxPages,
-        jobTitle: jobTitle,
-        location: location
+        maxPages: params.maxPages,
+        jobTitle: params.jobTitle,
+        location: params.location
     };
     
     try {
@@ -135,10 +139,17 @@ async function startLinkedInScraping(maxPages, jobTitle, location) {
     } finally {
         isSearching = false;
     }
+    return { success: true };
+}
+
+function stopLinkedInScraping() {
+    const wasSearching = isSearching;
+    stopRequested = true;
+    return { success: true, wasSearching };
 }
 
 async function scrapeLinkedInJobs() {
-    while (searchData.currentPage <= searchData.maxPages && isSearching) {
+    while (searchData.currentPage <= searchData.maxPages && !stopRequested) {
         // Send progress update
         notifyExtension({
             action: "jobSearchProgress",
@@ -156,6 +167,8 @@ async function scrapeLinkedInJobs() {
         
         console.log(`Page ${searchData.currentPage}: Found ${pageJobs.length} jobs`);
         
+        if (stopRequested) break;
+
         // Check if there's a next page and navigate to it
         if (searchData.currentPage < searchData.maxPages) {
             const hasNext = await navigateToNextPage();
@@ -171,14 +184,17 @@ async function scrapeLinkedInJobs() {
         await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    // Create and download the file
-    const jobsText = AutoApplyLib.formatJobsForFile(searchData.jobs, searchData.jobTitle, searchData.location);
-    downloadJobsFile(jobsText, searchData.jobTitle);
-    
+    // Create and download the file (after a stop, only if something was found)
+    if (!stopRequested || searchData.jobs.length > 0) {
+        const jobsText = AutoApplyLib.formatJobsForFile(searchData.jobs, searchData.jobTitle, searchData.location);
+        await downloadJobsFile(jobsText, searchData.jobTitle);
+    }
+
     // Send completion message
     notifyExtension({
         action: "jobSearchComplete",
         success: true,
+        stopped: stopRequested,
         totalJobs: searchData.jobs.length
     });
 }
@@ -349,17 +365,21 @@ async function navigateToNextPage() {
     return false;
 }
 
-function downloadJobsFile(content, jobTitle) {
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const filename = `linkedin_jobs_${jobTitle.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
-    
-    // Use Chrome's downloads API through background script
-    notifyExtension({
-        action: "downloadFile",
-        url: url,
-        filename: filename
-    });
+// The background builds the file name and a data URL and starts the download, so there is
+// no blob URL to leak.
+async function downloadJobsFile(content, jobTitle) {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            action: "downloadJobs",
+            content: content,
+            jobTitle: jobTitle
+        });
+        if (response && response.success === false) {
+            console.error('Download failed:', response.error);
+        }
+    } catch (error) {
+        console.error('Download failed:', error);
+    }
 }
 
 // AI form filling functionality
@@ -830,6 +850,8 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
+    } else if (request.action === "stopLinkedInScraping") {
+        sendResponse(stopLinkedInScraping());
     } else if (request.action === "analyzePage") {
         const result = analyzePage();
         sendResponse(result);

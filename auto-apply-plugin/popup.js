@@ -211,73 +211,84 @@ document.addEventListener('DOMContentLoaded', function() {
     startJobSearch(jobTitle, location, experienceLevel, maxPages);
   });
 
-  function startJobSearch(jobTitle, location, experienceLevel, maxPages) {
+  // Shows the running state. The button stays enabled so it can be used as Stop.
+  function showSearchRunning() {
     searchInProgress = true;
     searchBtn.querySelector('.button-text').textContent = '⏹️ Stop Search';
     searchBtn.classList.remove('success-btn');
     searchBtn.classList.add('danger-btn');
-    
-    setLoading(searchBtn, true, '🔍 Opening LinkedIn and starting search...', searchStatus);
+    searchSpinner.style.display = 'inline-block';
+    searchBtn.disabled = false;
     searchProgress.style.display = 'block';
     jobStats.style.display = 'grid';
     searchLogs.style.display = 'block';
-    
+  }
+
+  function showSearchIdle() {
+    searchInProgress = false;
+    searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
+    searchBtn.classList.remove('danger-btn');
+    searchBtn.classList.add('success-btn');
+    setLoading(searchBtn, false);
+    currentSearchTabId = null;
+  }
+
+  // The background owns the search: it opens LinkedIn and starts scraping once the tab has
+  // loaded, so closing this popup does not stop or break it.
+  function startJobSearch(jobTitle, location, experienceLevel, maxPages) {
+    showSearchRunning();
+    searchStatus.textContent = '🔍 Opening LinkedIn and starting search...';
+    searchStatus.className = 'status info';
+    searchStatus.style.display = 'block';
+
     // Reset counters
     jobsFound.textContent = '0';
     pagesScraped.textContent = '0';
     searchLogs.textContent = '';
     progressFill.style.width = '0%';
-    
+
     addLog('🚀 Starting job search...');
     addLog(`🎯 Searching for: ${jobTitle} ${location ? `in ${location}` : ''}`);
-    
-    // Open LinkedIn search
+
     chrome.runtime.sendMessage({
-      action: "openLinkedInSearch",
+      action: "startJobSearch",
+      maxPages: maxPages,
       params: {
         jobTitle: jobTitle,
         location: location,
         experienceLevel: experienceLevel
       }
     }, function(response) {
-      if (chrome.runtime.lastError) {
-        addLog(`❌ ${chrome.runtime.lastError.message}`);
+      if (chrome.runtime.lastError || !response || !response.success) {
+        const reason = chrome.runtime.lastError ? chrome.runtime.lastError.message : (response && response.error) || 'unknown error';
+        addLog(`❌ Failed to open LinkedIn: ${reason}`);
+        showSearchIdle();
+        return;
       }
-      if (response && response.success) {
-        currentSearchTabId = response.tabId;
-        addLog('🌐 LinkedIn opened, waiting for page load...');
-        
-        // Start scraping after a delay
-        setTimeout(() => {
-          chrome.runtime.sendMessage({
-            action: "startJobScraping",
-            maxPages: maxPages,
-            jobTitle: jobTitle,
-            location: location
-          });
-        }, 5000);
-      } else {
-        addLog('❌ Failed to open LinkedIn');
-        stopJobSearch();
-      }
+      currentSearchTabId = response.tabId;
+      addLog('🌐 LinkedIn opened; scraping starts when the page has loaded. You can close this popup.');
     });
   }
 
   function stopJobSearch() {
-    searchInProgress = false;
-    searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
-    searchBtn.classList.remove('danger-btn');
-    searchBtn.classList.add('success-btn');
-    setLoading(searchBtn, false);
-    
-    if (currentSearchTabId) {
-      // Optionally close the search tab
-      // chrome.tabs.remove(currentSearchTabId);
-      currentSearchTabId = null;
-    }
-    
+    chrome.runtime.sendMessage({ action: "stopJobSearch" }, function() {
+      if (chrome.runtime.lastError) {
+        addLog(`❌ ${chrome.runtime.lastError.message}`);
+      }
+    });
+    showSearchIdle();
     addLog('⏹️ Search stopped by user');
   }
+
+  // A search may still be running from an earlier time the popup was open.
+  chrome.runtime.sendMessage({ action: "getJobSearchState" }, function(response) {
+    if (chrome.runtime.lastError) return;
+    if (response && response.success && response.search) {
+      currentSearchTabId = response.search.tabId;
+      showSearchRunning();
+      addLog(`🔄 Search for "${response.search.jobTitle}" is running in another tab`);
+    }
+  });
 
   // Fill current form
   fillBtn.addEventListener('click', function() {
@@ -401,24 +412,21 @@ document.addEventListener('DOMContentLoaded', function() {
       
       addLog(`📄 Scraped page ${request.currentPage}/${request.totalPages} - Found ${request.jobsFound} jobs total`);
     } else if (request.action === "jobSearchComplete") {
-      searchInProgress = false;
-      searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
-      searchBtn.classList.remove('danger-btn');
-      searchBtn.classList.add('success-btn');
-      setLoading(searchBtn, false);
+      showSearchIdle();
       progressFill.style.width = '100%';
-      
+      searchStatus.style.display = 'block';
+
       if (request.success) {
-        searchStatus.textContent = `🎉 Search complete! Found ${request.totalJobs} jobs and saved to downloads`;
+        const saved = request.totalJobs > 0 ? ' and saved to downloads' : '';
+        const verb = request.stopped ? 'Search stopped.' : 'Search complete!';
+        searchStatus.textContent = `🎉 ${verb} Found ${request.totalJobs} jobs${saved}`;
         searchStatus.className = 'status success';
-        addLog(`✅ Search completed successfully! ${request.totalJobs} jobs saved to file`);
+        addLog(`✅ ${verb} ${request.totalJobs} jobs${saved}`);
       } else {
         searchStatus.textContent = `❌ Search failed: ${request.error}`;
         searchStatus.className = 'status error';
         addLog(`❌ Search failed: ${request.error}`);
       }
-      
-      currentSearchTabId = null;
     } else if (request.action === "linkedinLoaded") {
       addLog('✅ LinkedIn page loaded, starting job extraction...');
     }

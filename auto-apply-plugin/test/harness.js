@@ -128,6 +128,9 @@ function createChrome(options) {
         if (callback) { callback(tab); return undefined; }
         return Promise.resolve(tab);
       },
+      get(tabId) {
+        return Promise.resolve({ id: tabId, status: opts.tabStatus || 'loading' });
+      },
       query() {
         return Promise.resolve(opts.activeTab ? [opts.activeTab] : []);
       },
@@ -206,6 +209,7 @@ function createContext(globals) {
     URLSearchParams,
     Blob,
     TextEncoder,
+    btoa,
     encodeURIComponent,
     setTimeout,
     clearTimeout,

@@ -59,52 +59,130 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
+// --- LinkedIn job search ---------------------------------------------------------------
+// The search state lives in storage.session so it survives the service worker being stopped,
+// and scraping is started from here when the tab has loaded, so it no longer depends on the
+// popup staying open.
+const SEARCH_KEY = 'jobSearch';
+
+async function getSearch() {
+  const stored = await chrome.storage.session.get(SEARCH_KEY);
+  return stored[SEARCH_KEY] || null;
+}
+
+function saveSearch(search) {
+  return chrome.storage.session.set({ [SEARCH_KEY]: search });
+}
+
+function clearSearch() {
+  return chrome.storage.session.remove(SEARCH_KEY);
+}
+
+async function startJobSearch(request) {
+  const params = AutoApplyLib.normalizeSearchRequest(request);
+  const previous = await getSearch();
+  if (previous) await stopJobSearch();
+
+  const tab = await chrome.tabs.create({ url: AutoApplyLib.buildLinkedInSearchUrl(params) });
+  await saveSearch({ ...params, tabId: tab.id, started: false, createdAt: Date.now() });
+
+  // The tab may already have finished loading before the state was saved.
+  const current = await chrome.tabs.get(tab.id).catch(() => null);
+  if (current && current.status === 'complete') {
+    await maybeStartScraping(tab.id, { status: 'complete' });
+  }
+  return { success: true, tabId: tab.id };
+}
+
+async function maybeStartScraping(tabId, changeInfo) {
+  const search = await getSearch();
+  if (!AutoApplyLib.shouldStartScraping(search, tabId, changeInfo)) return;
+
+  await saveSearch({ ...search, started: true });
+  notifyExtension({ action: "linkedinLoaded", tabId: tabId });
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      action: "startLinkedInScraping",
+      maxPages: search.maxPages,
+      jobTitle: search.jobTitle,
+      location: search.location
+    });
+  } catch (error) {
+    console.error('Could not start scraping:', error);
+    await clearSearch();
+    notifyExtension({ action: "jobSearchComplete", success: false, error: `Could not start scraping: ${error.message}` });
+  }
+}
+
+async function stopJobSearch() {
+  const search = await getSearch();
+  await clearSearch();
+  if (search && search.tabId !== undefined) {
+    await chrome.tabs.sendMessage(search.tabId, { action: "stopLinkedInScraping" }).catch(() => {});
+  }
+  return { success: true, stopped: Boolean(search) };
+}
+
+async function downloadJobs(request) {
+  const content = typeof request.content === 'string' ? request.content : '';
+  const downloadId = await chrome.downloads.download({
+    url: AutoApplyLib.textToDataUrl(content),
+    filename: AutoApplyLib.buildJobsFilename(request.jobTitle),
+    saveAs: true
+  });
+  return { success: true, downloadId };
+}
+
+function respond(promise, sendResponse) {
+  promise
+    .then(result => sendResponse(result))
+    .catch(error => {
+      console.error(error);
+      sendResponse({ success: false, error: error.message });
+    });
+  return true; // keep the message channel open for the async response
+}
+
 // Handle messages from content script and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "showNotification") {
-    showNotification(request.message);
-  } else if (request.action === "downloadFile") {
-    chrome.downloads.download({
-      url: request.url,
-      filename: request.filename,
-      saveAs: true
-    }).catch(error => console.error('Download failed:', error));
-  } else if (request.action === "openLinkedInSearch") {
-    // Open LinkedIn search in new tab
-    const url = AutoApplyLib.buildLinkedInSearchUrl(request.params);
-    chrome.tabs.create({ url: url }, (tab) => {
-      // Store the search tab ID for coordination
-      chrome.storage.local.set({ searchTabId: tab.id });
-      
-      // Send response back to popup
-      sendResponse({ success: true, tabId: tab.id });
-    });
-    return true; // Keep message channel open
-  } else if (request.action === "startJobScraping") {
-    // Start the job scraping process
-    chrome.storage.local.get(['searchTabId'], (result) => {
-      if (result.searchTabId) {
-        // Wait a moment for LinkedIn to load, then start scraping
-        setTimeout(() => {
-          chrome.tabs.sendMessage(result.searchTabId, {
-            action: "startLinkedInScraping",
-            maxPages: request.maxPages,
-            jobTitle: request.jobTitle,
-            location: request.location
-          }).catch(error => console.error('Could not start scraping:', error));
-        }, 3000);
+  if (!request || sender.id !== chrome.runtime.id) return undefined;
+
+  switch (request.action) {
+    case "showNotification":
+      showNotification(request.message);
+      return undefined;
+    case "downloadJobs":
+      return respond(downloadJobs(request), sendResponse);
+    case "startJobSearch":
+      return respond(startJobSearch(request), sendResponse);
+    case "stopJobSearch":
+      return respond(stopJobSearch(), sendResponse);
+    case "getJobSearchState":
+      return respond(getSearch().then(search => ({ success: true, search })), sendResponse);
+    case "jobSearchComplete":
+      // Sent by the content script in the search tab; the popup gets it too.
+      if (sender.tab) {
+        getSearch().then(search => {
+          if (search && search.tabId === sender.tab.id) return clearSearch();
+          return undefined;
+        }).catch(error => console.error(error));
       }
-    });
+      return undefined;
+    default:
+      return undefined;
   }
 });
 
-// Listen for tab updates to know when LinkedIn has loaded
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.includes('linkedin.com/jobs/search')) {
-    // Notify popup that LinkedIn has loaded
-    notifyExtension({
-      action: "linkedinLoaded",
-      tabId: tabId
-    });
-  }
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+  maybeStartScraping(tabId, changeInfo).catch(error => console.error(error));
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  getSearch().then(async (search) => {
+    if (search && search.tabId === tabId) {
+      await clearSearch();
+      notifyExtension({ action: "jobSearchComplete", success: false, error: 'The LinkedIn tab was closed' });
+    }
+  }).catch(error => console.error(error));
 });
