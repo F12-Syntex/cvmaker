@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import com.cvmaker.application.management.sheets.HyperlinkFormula;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
@@ -126,6 +127,10 @@ public class GoogleSheetsService {
             return type;
         }
     }
+
+    // Text shown in the two link columns
+    private static final String EMAIL_LINK_LABEL = "📧 View";
+    private static final String APPLICATION_LINK_LABEL = "🔗 Apply";
 
     private Sheets sheetsService;
     private String spreadsheetId;
@@ -268,7 +273,8 @@ public class GoogleSheetsService {
             int rowIndex = i + 2; // +2 because data starts at row 2 (1-indexed)
 
             // Add hyperlink for email link
-            if (emailLinkIndex >= 0 && jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
+            String emailFormula = HyperlinkFormula.build(jobData.getEmailLink(), EMAIL_LINK_LABEL).orElse(null);
+            if (emailLinkIndex >= 0 && emailFormula != null) {
                 requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                         .setRange(new GridRange()
                                 .setSheetId(0)
@@ -277,12 +283,13 @@ public class GoogleSheetsService {
                         .setRows(Collections.singletonList(new RowData()
                                 .setValues(Collections.singletonList(new CellData()
                                         .setUserEnteredValue(new ExtendedValue()
-                                                .setFormulaValue("=HYPERLINK(\"" + jobData.getEmailLink() + "\", \"📧 View\")"))))))
+                                                .setFormulaValue(emailFormula))))))
                         .setFields("userEnteredValue")));
             }
 
             // Add hyperlink for application URL
-            if (applicationUrlIndex >= 0 && jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
+            String applicationFormula = HyperlinkFormula.build(jobData.getApplicationUrl(), APPLICATION_LINK_LABEL).orElse(null);
+            if (applicationUrlIndex >= 0 && applicationFormula != null) {
                 requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                         .setRange(new GridRange()
                                 .setSheetId(0)
@@ -291,7 +298,7 @@ public class GoogleSheetsService {
                         .setRows(Collections.singletonList(new RowData()
                                 .setValues(Collections.singletonList(new CellData()
                                         .setUserEnteredValue(new ExtendedValue()
-                                                .setFormulaValue("=HYPERLINK(\"" + jobData.getApplicationUrl() + "\", \"🔗 Apply\")"))))))
+                                                .setFormulaValue(applicationFormula))))))
                         .setFields("userEnteredValue")));
             }
         }
@@ -570,7 +577,8 @@ public class GoogleSheetsService {
         }
 
         // Add hyperlink for email link
-        if (emailLinkIndex >= 0 && jobData.getEmailLink() != null && !jobData.getEmailLink().isEmpty()) {
+        String emailFormula = HyperlinkFormula.build(jobData.getEmailLink(), EMAIL_LINK_LABEL).orElse(null);
+        if (emailLinkIndex >= 0 && emailFormula != null) {
             requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                     .setRange(new GridRange()
                             .setSheetId(0)
@@ -579,12 +587,13 @@ public class GoogleSheetsService {
                     .setRows(Collections.singletonList(new RowData()
                             .setValues(Collections.singletonList(new CellData()
                                     .setUserEnteredValue(new ExtendedValue()
-                                            .setFormulaValue("=HYPERLINK(\"" + jobData.getEmailLink() + "\", \"📧 View\")"))))))
+                                            .setFormulaValue(emailFormula))))))
                     .setFields("userEnteredValue")));
         }
 
         // Add hyperlink for application URL
-        if (applicationUrlIndex >= 0 && jobData.getApplicationUrl() != null && !jobData.getApplicationUrl().isEmpty()) {
+        String applicationFormula = HyperlinkFormula.build(jobData.getApplicationUrl(), APPLICATION_LINK_LABEL).orElse(null);
+        if (applicationUrlIndex >= 0 && applicationFormula != null) {
             requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                     .setRange(new GridRange()
                             .setSheetId(0)
@@ -593,7 +602,7 @@ public class GoogleSheetsService {
                     .setRows(Collections.singletonList(new RowData()
                             .setValues(Collections.singletonList(new CellData()
                                     .setUserEnteredValue(new ExtendedValue()
-                                            .setFormulaValue("=HYPERLINK(\"" + jobData.getApplicationUrl() + "\", \"🔗 Apply\")"))))))
+                                            .setFormulaValue(applicationFormula))))))
                     .setFields("userEnteredValue")));
         }
 
@@ -1071,10 +1080,12 @@ public class GoogleSheetsService {
                     value = formatDateToHumanReadable(jobData.getInterviewDate());
                     break;
                 case "emailLink":
-                    value = "View Email";  // Will be converted to hyperlink
+                    // Replaced by a hyperlink formula; left empty when the link is not a safe URL
+                    value = HyperlinkFormula.isSafeUrl(jobData.getEmailLink()) ? "View Email" : "";
                     break;
                 case "applicationUrl":
-                    value = jobData.getApplicationUrl() != null ? "Apply" : "";  // Will be converted to hyperlink
+                    // Replaced by a hyperlink formula; left empty when the link is not a safe URL
+                    value = HyperlinkFormula.isSafeUrl(jobData.getApplicationUrl()) ? "Apply" : "";
                     break;
                 case "extractedInfo":
                     value = combineNotes(jobData);
