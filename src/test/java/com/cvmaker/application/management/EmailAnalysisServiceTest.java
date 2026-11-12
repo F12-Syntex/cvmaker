@@ -77,4 +77,51 @@ class EmailAnalysisServiceTest {
         assertThat(data.getCategory()).isNull();
         assertThat(data.getEmailId()).isEqualTo("id-1");
     }
+
+    // ---- item 4: rule-based fallback, reached when the AI call fails ----
+
+    private static JobApplicationData analyzeWithBrokenAi(String subject, String from, String body) {
+        EmailAnalysisService service = new EmailAnalysisService(prompt -> {
+            throw new IllegalStateException("AI is down");
+        });
+        return service.analyzeEmail("id-2", subject, from, DATE, body);
+    }
+
+    @Test
+    void fallbackAcceptsAnOrdinaryApplicationConfirmation() {
+        // "call", "finally" and "small" contain "all", which the old keyword list rejected.
+        JobApplicationData data = analyzeWithBrokenAi(
+                "Thank you for applying to Acme",
+                "Acme Careers <no-reply@acme.example>",
+                "Thank you for applying. Our small team will finally review your application and call you.");
+
+        assertThat(data.isJobRelated()).isTrue();
+        assertThat(data.getCategory()).isEqualTo(EmailCategory.APPLICATION_CONFIRMATION);
+        assertThat(data.getConfidenceScore()).isEqualTo(0.5);
+        assertThat(data.getProvider()).isEqualTo("Company Website");
+    }
+
+    @Test
+    void fallbackAcceptsARejectionThatMentionsFutureOpportunities() {
+        JobApplicationData data = analyzeWithBrokenAi(
+                "Update on your application",
+                "Jane Doe <jane.doe@acme.example>",
+                "Unfortunately we are not moving forward with your application. "
+                        + "We wish you all the best with future opportunities.");
+
+        assertThat(data.isJobRelated()).isTrue();
+        assertThat(data.getCategory()).isEqualTo(EmailCategory.REJECTION);
+        assertThat(data.getProvider()).isEqualTo("Direct Email");
+    }
+
+    @Test
+    void fallbackStillRejectsAJobAlertNewsletter() {
+        JobApplicationData data = analyzeWithBrokenAi(
+                "Your weekly job alert: 12 new roles",
+                "Job Alerts <alerts@jobboard.example>",
+                "Improve your application with these roles picked for you.");
+
+        assertThat(data.isJobRelated()).isFalse();
+        assertThat(data.getCategory()).isNull();
+    }
 }

@@ -259,7 +259,7 @@ public class EmailAnalysisService {
             // the other extracted fields, so fall back to the rule-based category.
             String category = extractJsonValue(cleanResponse, "category");
             data.setCategory(EmailCategory.fromLabel(category)
-                    .orElseGet(() -> categorizeEmailRuleBased(subject, body)));
+                    .orElseGet(() -> EmailRuleClassifier.categorize(subject, body)));
 
             data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
             data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
@@ -294,28 +294,7 @@ public class EmailAnalysisService {
         if (aiProvider != null && !aiProvider.trim().isEmpty()) {
             return aiProvider;
         }
-
-        String combinedText = (from + " " + body).toLowerCase();
-
-        if (combinedText.contains("linkedin") || from.toLowerCase().contains("linkedin")) {
-            return "LinkedIn";
-        } else if (combinedText.contains("indeed") || from.toLowerCase().contains("indeed")) {
-            return "Indeed";
-        } else if (combinedText.contains("glassdoor") || from.toLowerCase().contains("glassdoor")) {
-            return "Glassdoor";
-        } else if (combinedText.contains("angellist") || from.toLowerCase().contains("angellist")) {
-            return "AngelList";
-        } else if (combinedText.contains("ziprecruiter") || from.toLowerCase().contains("ziprecruiter")) {
-            return "ZipRecruiter";
-        } else if (combinedText.contains("monster") || from.toLowerCase().contains("monster")) {
-            return "Monster";
-        } else if (combinedText.contains("dice") || from.toLowerCase().contains("dice")) {
-            return "Dice";
-        } else if (from.toLowerCase().contains("noreply") || from.toLowerCase().contains("no-reply")) {
-            return "Company Website";
-        } else {
-            return "Direct Email";
-        }
+        return EmailRuleClassifier.provider(from, body);
     }
 
     private String extractJsonValue(String json, String key) {
@@ -331,82 +310,15 @@ public class EmailAnalysisService {
     private JobApplicationData createFallbackData(String emailId, String subject, String from, String date, String body) {
         JobApplicationData fallbackData = new JobApplicationData(emailId, subject, from, date);
 
-        boolean isJobRelated = isJobRelatedRuleBased(subject, from, body);
+        boolean isJobRelated = EmailRuleClassifier.isJobRelated(subject, from, body);
         fallbackData.setJobRelated(isJobRelated);
 
         if (isJobRelated) {
-            fallbackData.setCategory(categorizeEmailRuleBased(subject, body));
+            fallbackData.setCategory(EmailRuleClassifier.categorize(subject, body));
             fallbackData.setConfidenceScore(0.5);
             fallbackData.setProvider(determineProvider(from, body, null));
         }
 
         return fallbackData;
-    }
-
-    private boolean isJobRelatedRuleBased(String subject, String from, String body) {
-        String combinedText = (subject + " " + from + " " + body).toLowerCase();
-
-        // First, check for common non-job indicators
-        String[] nonJobKeywords = {
-            "newsletter", "update", "opportunity", "opportunities", "career tips",
-            "network", "connect", "subscription", "weekly", "monthly",
-            "social", "notification", "general", "blast", "all", "invitation",
-            "community", "platform", "discover", "explore", "course", "training"
-        };
-
-        for (String keyword : nonJobKeywords) {
-            if (combinedText.contains(keyword)) {
-                return false;
-            }
-        }
-
-        // Strong indicators of user's specific job application
-        String[] specificApplicationKeywords = {
-            "your application", "you applied", "your candidacy", "your resume",
-            "your interview", "we received your", "thank you for applying",
-            "your interest in", "moving forward with your", "regarding your application",
-            "your recent application", "your submission"
-        };
-
-        for (String phrase : specificApplicationKeywords) {
-            if (combinedText.contains(phrase)) {
-                return true;
-            }
-        }
-
-        // Explicit job application stages
-        if ((combinedText.contains("interview") && (combinedText.contains("schedule") || combinedText.contains("confirm")))
-                || (combinedText.contains("offer") && combinedText.contains("position"))
-                || (combinedText.contains("reject") && combinedText.contains("application"))
-                || (combinedText.contains("not moving forward") && combinedText.contains("application"))) {
-            return true;
-        }
-
-        return false;
-    }
-
-    private EmailCategory categorizeEmailRuleBased(String subject, String body) {
-        String combinedText = (subject + " " + body).toLowerCase();
-
-        if (combinedText.contains("interview") && (combinedText.contains("invite") || combinedText.contains("schedule"))) {
-            return EmailCategory.INTERVIEW_INVITATION;
-        }
-        if (combinedText.contains("offer") && (combinedText.contains("job") || combinedText.contains("position"))) {
-            return EmailCategory.OFFER;
-        }
-        if (combinedText.contains("reject") || combinedText.contains("unfortunately") || combinedText.contains("not moving forward")) {
-            return EmailCategory.REJECTION;
-        }
-        if (combinedText.contains("application received") || combinedText.contains("thank you for applying")) {
-            return EmailCategory.APPLICATION_CONFIRMATION;
-        }
-        if (combinedText.contains("assessment") || combinedText.contains("test") || combinedText.contains("coding challenge")) {
-            return EmailCategory.ASSESSMENT_REQUEST;
-        }
-        if (combinedText.contains("phone") && combinedText.contains("screen")) {
-            return EmailCategory.SCREENING_CALL;
-        }
-
-        return EmailCategory.APPLICATION_CONFIRMATION;
     }
 }
