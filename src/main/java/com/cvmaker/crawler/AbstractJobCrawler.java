@@ -16,7 +16,12 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.options.LoadState;
 
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 
 /**
  * Abstract base implementation for all job site crawlers. Handles common
@@ -37,6 +42,14 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     protected int applicationsSubmitted = 0;
     protected int jobsChecked = 0;
     protected int easyApplyJobsFound = 0;
+
+    // One CV generator, and so one AI client and one executor thread, for the
+    // whole session. Created on first use, shut down in close().
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private CVGenerator cvGenerator;
 
     public AbstractJobCrawler() throws Exception {
         this(new CrawlerConfig());
@@ -144,13 +157,23 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     }
 
     /**
-     * Release the browser. Safe to call more than once, before
-     * {@link #setupBrowser()}, and after a failed setup: every resource is
-     * closed in its own step, so one failing close does not leak the others.
+     * Release the browser and the CV generator. Safe to call more than once,
+     * before {@link #setupBrowser()}, and after a failed setup: every resource
+     * is closed in its own step, so one failing close does not leak the others.
      */
     @Override
     public synchronized void close() {
         closeBrowser();
+
+        CVGenerator generator = cvGenerator;
+        cvGenerator = null;
+        if (generator != null) {
+            try {
+                generator.shutdown();
+            } catch (Exception e) {
+                System.out.println("Error shutting down CV generator for " + getCrawlerName() + ": " + e.getMessage());
+            }
+        }
     }
 
     private void closeBrowser() {
@@ -223,19 +246,18 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             // Create config for this specific job
             config.setJobDescriptionContent(jobContent);
 
-            // Generate CV using the simplified CVGenerator
-            CVGenerator generator = new CVGenerator(config);
+            // Generate CV with the session's CVGenerator (shut down in close())
+            CVGenerator generator = cvGenerator();
 
-            // Temporarily update config output directory
+            // Temporarily point the output directory at the job folder, and
+            // always restore it: a failed job must not redirect the next ones.
             String originalOutputDir = config.getOutputDirectory();
             config.setOutputDirectory(jobFolderPath.toString());
-
-            generator.generate();
-
-            // Restore original output directory
-            config.setOutputDirectory(originalOutputDir);
-
-            generator.shutdown();
+            try {
+                generator.generate();
+            } finally {
+                config.setOutputDirectory(originalOutputDir);
+            }
 
             Path cvPath = jobFolderPath.resolve(config.getOutputPdfName());
             if (Files.exists(cvPath)) {
@@ -251,6 +273,21 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             e.printStackTrace();
             return null;
         }
+    }
+
+    /**
+     * Build the CV generator for this crawler. Called at most once per session
+     * (again only after {@link #close()}). Overridable for tests.
+     */
+    protected CVGenerator createCvGenerator() {
+        return new CVGenerator(config);
+    }
+
+    private synchronized CVGenerator cvGenerator() {
+        if (cvGenerator == null) {
+            cvGenerator = createCvGenerator();
+        }
+        return cvGenerator;
     }
 
     protected int adjustedDelay(int baseDelay) {
