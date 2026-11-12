@@ -1,15 +1,9 @@
 package com.cvmaker.application.management;
 
-import java.io.IOException;
-import java.util.List;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import com.cvmaker.service.ai.AiService;
 import com.cvmaker.util.LlmJson;
-import com.cvmaker.websearch.SearchResult;
-import com.cvmaker.websearch.SearchService;
 import com.fasterxml.jackson.databind.JsonNode;
 
 public class EmailAnalysisService {
@@ -19,11 +13,9 @@ public class EmailAnalysisService {
 
     /** Sends a prompt to the LLM and returns its text answer. */
     private final Function<String, String> llm;
-    private final SearchService searchService;
 
     public EmailAnalysisService(AiService aiService) {
         this.llm = aiService::query;
-        this.searchService = new SearchService(ApplicationConfig.getExaApiKey());
     }
 
     /**
@@ -32,7 +24,6 @@ public class EmailAnalysisService {
      */
     EmailAnalysisService(Function<String, String> llm) {
         this.llm = llm;
-        this.searchService = null;
     }
 
     /** Where the data of an {@link AnalysisResult} came from. */
@@ -100,88 +91,12 @@ public class EmailAnalysisService {
 
         try {
             JobApplicationData jobData = parseEnhancedAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
-
-            // Only perform web search if the email is job-related
-            // if (jobData.isJobRelated() && jobData.getCompanyName() != null) {
-            //     enrichWithWebSearch(jobData);
-            // }
-
             return new AnalysisResult(jobData, Outcome.AI_ANSWER);
         } catch (RuntimeException e) {
             System.err.println("Error parsing AI response, using keyword rules: " + e.getMessage());
             return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
                     Outcome.RULES_AFTER_BAD_ANSWER);
         }
-    }
-
-    private void enrichWithWebSearch(JobApplicationData jobData) {
-        try {
-            // Search for job application page
-            String applicationQuery = String.format("site:careers.* OR site:jobs.* \"%s\" \"%s\" apply",
-                    jobData.getCompanyName(),
-                    jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "");
-
-            List<SearchResult> applicationResults = searchService.search(applicationQuery);
-
-            // Search for hiring manager/recruiter contact
-            String contactQuery = String.format("\"%s\" recruiter OR \"talent acquisition\" OR \"hiring manager\" email contact",
-                    jobData.getCompanyName());
-
-            List<SearchResult> contactResults = searchService.search(contactQuery);
-
-            //ask ai for the most relevant results
-            if (applicationResults.isEmpty() && contactResults.isEmpty()) {
-                System.out.println("No relevant results found for " + jobData.getCompanyName());
-                return;
-            }
-
-            System.out.println("Found " + applicationResults.size() + " application results and " + contactResults.size() + " contact results for " + jobData.getCompanyName());
-
-            //use ai to determine the most correct results, and set them
-            String applicationText = applicationResults.isEmpty() ? "" : applicationResults.get(0).getSnippet();
-            String contactText = contactResults.isEmpty() ? "" : contactResults.get(0).getSnippet();
-
-            String enrichmentPrompt = String.format("""
-            Analyze the following information and extract relevant details for job application enrichment:
-            Application Information: %s
-            Contact Information: %s
-            Return a JSON response with the following fields:
-            - applicationUrl: URL of the job application page (if found)
-            - contactPerson: Name of the recruiter or hiring manager (if found)
-            - contactEmail: Email address of the recruiter or hiring manager (if found)
-            - extractedInfo: Brief summary of key information (max 100 words)
-            """, applicationText, contactText);
-            String enrichmentResponse = llm.apply(enrichmentPrompt);
-            System.out.println("Enrichment AI Response: " + enrichmentResponse);
-            // Parse the enrichment response
-            JsonNode enrichment = LlmJson.extractObject(enrichmentResponse).orElse(null);
-            String applicationUrl = LlmJson.text(enrichment, "applicationUrl");
-            String contactPerson = LlmJson.text(enrichment, "contactPerson");
-            String contactEmail = LlmJson.text(enrichment, "contactEmail");
-            String extractedInfo = LlmJson.text(enrichment, "extractedInfo");
-            // Set the enriched data in the job application data
-            if (applicationUrl != null && !applicationUrl.isEmpty()) {
-                jobData.setApplicationUrl(applicationUrl);
-            }
-            if (contactPerson != null && !contactPerson.isEmpty()) {
-                jobData.setContactPerson(contactPerson);
-            }
-            if (contactEmail != null && !contactEmail.isEmpty()) {
-                jobData.setContactEmail(contactEmail);
-            }
-            if (extractedInfo != null && !extractedInfo.isEmpty()) {
-                jobData.setExtractedInfo(extractedInfo);
-            }
-
-        } catch (IOException e) {
-            System.err.println("Error in web search enrichment: " + e.getMessage());
-        }
-    }
-
-    private String extractEmailFromText(String text) {
-        Pattern pattern = Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,6}");
-        Matcher matcher = pattern.matcher(text);
-        return matcher.find() ? matcher.group() : null;
     }
 
     private String extractTextFromHtml(String htmlContent) {
