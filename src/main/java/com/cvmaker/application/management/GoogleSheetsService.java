@@ -3,19 +3,17 @@ package com.cvmaker.application.management;
 import java.io.File;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.cvmaker.application.management.sheets.DateParsing;
+import com.cvmaker.application.management.sheets.ApplicationRecency;
 import com.cvmaker.application.management.sheets.HyperlinkRequests;
 import com.cvmaker.application.management.sheets.SheetColumn;
 import com.cvmaker.application.management.sheets.SheetRowMapper;
+import com.cvmaker.application.management.sheets.StatusFormatRules;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
@@ -107,20 +105,9 @@ public class GoogleSheetsService {
         // Clear existing data (keeping headers)
         clearExistingData();
 
-        // Get the most recent application per company
-        Map<String, JobApplicationData> latestApplications = new HashMap<>();
-        
-        for (JobApplicationData jobData : consolidatedApplications.values()) {
-            if (jobData.isJobRelated()) {
-                String companyKey = jobData.getCompanyName().trim().toLowerCase();
-                
-                // If we don't have this company yet, or this email is newer than what we have
-                if (!latestApplications.containsKey(companyKey) || 
-                    isNewerApplication(jobData, latestApplications.get(companyKey))) {
-                    latestApplications.put(companyKey, jobData);
-                }
-            }
-        }
+        // Keep the most recent application per company
+        Map<String, JobApplicationData> latestApplications
+                = ApplicationRecency.latestPerCompany(consolidatedApplications.values());
 
         // Prepare data rows from the filtered map
         List<List<Object>> allRows = new ArrayList<>();
@@ -214,7 +201,7 @@ public class GoogleSheetsService {
                     // Extract the job data from this row to compare timestamps
                     JobApplicationData existingJobData = extractJobDataFromRow(row);
                     
-                    if (latestJobData == null || isNewerApplication(existingJobData, latestJobData)) {
+                    if (latestJobData == null || ApplicationRecency.isNewer(existingJobData, latestJobData)) {
                         latestJobData = existingJobData;
                         latestRowIndex = actualRowIndex;
                     }
@@ -223,7 +210,7 @@ public class GoogleSheetsService {
         }
 
         // Now compare if the new job data is newer than what's already in the sheet
-        if (latestJobData != null && !isNewerApplication(jobData, latestJobData)) {
+        if (latestJobData != null && !ApplicationRecency.isNewer(jobData, latestJobData)) {
             System.out.println("Skipping update for " + jobData.getCompanyName() + 
                     " as we already have a newer entry in the spreadsheet.");
             return;
@@ -266,100 +253,6 @@ public class GoogleSheetsService {
 
             System.out.println("Updated application: " + jobData.getCompanyName() + " - " + jobData.getPositionTitle() + " (" + jobData.getApplicationStatus() + ")");
         }
-    }
-
-    // Helper method to determine which application is newer
-    private boolean isNewerApplication(JobApplicationData newApp, JobApplicationData existingApp) {
-        // First try to compare emailTimestamp
-        if (newApp.getEmailTimestamp() != null && existingApp.getEmailTimestamp() != null) {
-            try {
-                LocalDateTime newTime = LocalDateTime.parse(newApp.getEmailTimestamp());
-                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getEmailTimestamp());
-                return newTime.isAfter(existingTime);
-            } catch (DateTimeParseException e) {
-                // Fall through to next comparison method
-            }
-        }
-        
-        // Then try to compare lastUpdated
-        if (newApp.getLastUpdated() != null && existingApp.getLastUpdated() != null) {
-            try {
-                LocalDateTime newTime = LocalDateTime.parse(newApp.getLastUpdated());
-                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getLastUpdated());
-                return newTime.isAfter(existingTime);
-            } catch (DateTimeParseException e) {
-                // Fall through to next comparison method
-            }
-        }
-        
-        // Then try to compare processedTimestamp
-        if (newApp.getProcessedTimestamp() != null && existingApp.getProcessedTimestamp() != null) {
-            try {
-                LocalDateTime newTime = LocalDateTime.parse(newApp.getProcessedTimestamp());
-                LocalDateTime existingTime = LocalDateTime.parse(existingApp.getProcessedTimestamp());
-                return newTime.isAfter(existingTime);
-            } catch (DateTimeParseException e) {
-                // Fall through to next comparison method
-            }
-        }
-        
-        // Finally, if all else fails, try to compare the application date
-        if (newApp.getDate() != null && existingApp.getDate() != null) {
-            LocalDate newDate = DateParsing.parseDate(newApp.getDate()).orElse(null);
-            LocalDate existingDate = DateParsing.parseDate(existingApp.getDate()).orElse(null);
-            if (newDate != null && existingDate != null) {
-                return newDate.isAfter(existingDate);
-            }
-        }
-        
-        // If we can't determine which is newer, prefer the one with a "more advanced" status
-        return isMoreAdvancedStatus(newApp.getApplicationStatus(), existingApp.getApplicationStatus());
-    }
-
-    // Helper method to determine if a status is "more advanced" in the application process
-    private boolean isMoreAdvancedStatus(String newStatus, String existingStatus) {
-        if (newStatus == null) return false;
-        if (existingStatus == null) return true;
-        
-        // Define a hierarchy of statuses (higher index = more advanced)
-        Map<String, Integer> statusRanking = new HashMap<>();
-        statusRanking.put("applied", 0);
-        statusRanking.put("received", 1);
-        statusRanking.put("screening", 2);
-        statusRanking.put("interview", 3);
-        statusRanking.put("interview scheduled", 3);
-        statusRanking.put("assessment", 4);
-        statusRanking.put("final interview", 5);
-        statusRanking.put("offered", 6);
-        statusRanking.put("accepted", 7);
-        statusRanking.put("rejected", -1);  // Special case, not more advanced
-        
-        String newStatusLower = newStatus.toLowerCase();
-        String existingStatusLower = existingStatus.toLowerCase();
-        
-        Integer newRank = null;
-        Integer existingRank = null;
-        
-        // Find the best match for each status
-        for (Map.Entry<String, Integer> entry : statusRanking.entrySet()) {
-            if (newStatusLower.contains(entry.getKey())) {
-                if (newRank == null || entry.getValue() > newRank) {
-                    newRank = entry.getValue();
-                }
-            }
-            if (existingStatusLower.contains(entry.getKey())) {
-                if (existingRank == null || entry.getValue() > existingRank) {
-                    existingRank = entry.getValue();
-                }
-            }
-        }
-        
-        // If we couldn't match the status to our known rankings, fall back to string comparison
-        if (newRank == null || existingRank == null) {
-            return true; // Default to considering the new status more advanced
-        }
-        
-        return newRank > existingRank;
     }
 
     // Helper method to extract JobApplicationData from a spreadsheet row
@@ -509,7 +402,7 @@ public class GoogleSheetsService {
                                                 .setType("CUSTOM_FORMULA")
                                                 .setValues(Collections.singletonList(
                                                         new com.google.api.services.sheets.v4.model.ConditionValue()
-                                                                .setUserEnteredValue("=UPPER($D2)=\"REJECTED\""))))
+                                                                .setUserEnteredValue(StatusFormatRules.formulaFor(StatusFormatRules.NEGATIVE)))))
                                         .setFormat(new CellFormat()
                                                 .setBackgroundColor(new Color()
                                                         .setRed(1.0f)
@@ -536,7 +429,7 @@ public class GoogleSheetsService {
                                                 .setType("CUSTOM_FORMULA")
                                                 .setValues(Collections.singletonList(
                                                         new com.google.api.services.sheets.v4.model.ConditionValue()
-                                                                .setUserEnteredValue("=OR(UPPER($D2)=\"OFFERED\",UPPER($D2)=\"ACCEPTED\")"))))
+                                                                .setUserEnteredValue(StatusFormatRules.formulaFor(StatusFormatRules.POSITIVE)))))
                                         .setFormat(new CellFormat()
                                                 .setBackgroundColor(new Color()
                                                         .setRed(0.8f)
@@ -563,7 +456,7 @@ public class GoogleSheetsService {
                                                 .setType("CUSTOM_FORMULA")
                                                 .setValues(Collections.singletonList(
                                                         new com.google.api.services.sheets.v4.model.ConditionValue()
-                                                                .setUserEnteredValue("=OR(UPPER($D2)=\"INTERVIEW\",UPPER($D2)=\"INTERVIEW SCHEDULED\")"))))
+                                                                .setUserEnteredValue(StatusFormatRules.formulaFor(StatusFormatRules.INTERVIEWING)))))
                                         .setFormat(new CellFormat()
                                                 .setBackgroundColor(new Color()
                                                         .setRed(1.0f)

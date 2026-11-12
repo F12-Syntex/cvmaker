@@ -59,6 +59,7 @@ class SheetRowMapperTest {
         assertThat(cell(row, SheetColumn.COMPANY)).isEqualTo("Acme");
         assertThat(cell(row, SheetColumn.POSITION)).isEqualTo("QA Lead");
         assertThat(cell(row, SheetColumn.DATE_APPLIED)).isEqualTo("11/11/2025");
+        assertThat(cell(row, SheetColumn.STATUS)).isEqualTo("Interview");
         assertThat(cell(row, SheetColumn.PROVIDER)).isEqualTo("LinkedIn");
         assertThat(cell(row, SheetColumn.EMAIL_LINK)).isEqualTo("View Email");
         assertThat(cell(row, SheetColumn.APPLICATION_URL)).isEqualTo("Apply");
@@ -106,6 +107,26 @@ class SheetRowMapperTest {
 
         assertThat(cell(row, SheetColumn.APPLICATION_URL)).isEqualTo("");
         assertThat(cell(row, SheetColumn.EMAIL_LINK)).isEqualTo("");
+    }
+
+    @Test
+    void statusCellUsesOneSpellingPerStatus() {
+        assertThat(SheetRowMapper.statusText("Offer")).isEqualTo("Offered");
+        assertThat(SheetRowMapper.statusText("OFFERED")).isEqualTo("Offered");
+        assertThat(SheetRowMapper.statusText("Interview Scheduled")).isEqualTo("Interview");
+        assertThat(SheetRowMapper.statusText("not selected")).isEqualTo("Rejected");
+        assertThat(SheetRowMapper.statusText(" On hold ")).isEqualTo("On hold");
+        assertThat(SheetRowMapper.statusText(null)).isEqualTo("Applied");
+        assertThat(SheetRowMapper.statusText("  ")).isEqualTo("Applied");
+    }
+
+    @Test
+    void rejectionWordedDifferentlyStillLeadsTheNotes() {
+        JobApplicationData job = new JobApplicationData();
+        job.setApplicationStatus("Application unsuccessful");
+        job.setRejectionReason("Role withdrawn");
+
+        assertThat(SheetRowMapper.combineNotes(job)).isEqualTo("❌ REJECTED: Role withdrawn");
     }
 
     @Test

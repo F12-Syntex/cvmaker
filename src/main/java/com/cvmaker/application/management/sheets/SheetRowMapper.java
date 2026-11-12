@@ -5,6 +5,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.cvmaker.application.management.ApplicationStatus;
 import com.cvmaker.application.management.JobApplicationData;
 
 /**
@@ -52,7 +53,7 @@ public final class SheetRowMapper {
                 case COMPANY -> orEmpty(job.getCompanyName());
                 case POSITION -> orEmpty(job.getPositionTitle());
                 case DATE_APPLIED -> DateParsing.toDisplayDate(job.getDate());
-                case STATUS -> job.getApplicationStatus() != null ? job.getApplicationStatus() : DEFAULT_STATUS;
+                case STATUS -> statusText(job.getApplicationStatus());
                 case PROVIDER -> orEmpty(job.getProvider());
                 case EMAIL_LINK -> HyperlinkFormula.isSafeUrl(job.getEmailLink()) ? EMAIL_LINK_TEXT : "";
                 case APPLICATION_URL -> HyperlinkFormula.isSafeUrl(job.getApplicationUrl()) ? APPLICATION_LINK_TEXT : "";
@@ -113,8 +114,22 @@ public final class SheetRowMapper {
         return String.join(NOTE_SEPARATOR, parts);
     }
 
+    /**
+     * The text of the Status cell: the {@link ApplicationStatus} label when the status is
+     * recognised ("Interview Scheduled" becomes "Interview"), so that filtering and the
+     * conditional formatting see one spelling per status; the text itself when it is not
+     * recognised; {@link #DEFAULT_STATUS} when there is none.
+     *
+     * @param status the status text of the application, may be null
+     * @return the cell text, never empty
+     */
+    public static String statusText(String status) {
+        String text = ApplicationStatus.displayLabel(status);
+        return text.isEmpty() ? DEFAULT_STATUS : text;
+    }
+
     private static boolean isRejected(String status) {
-        return status != null && status.trim().equalsIgnoreCase("Rejected");
+        return ApplicationStatus.normalize(status) == ApplicationStatus.REJECTED;
     }
 
     private static void addPart(List<String> parts, String prefix, String text) {
