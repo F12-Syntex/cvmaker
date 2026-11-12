@@ -7,13 +7,32 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class AiService {
+/**
+ * Sends prompts to an LLM with a timeout and retries.
+ *
+ * <p>
+ * A service holds an LLM client (for OpenAI, an HTTP connection pool), so
+ * create one, reuse it for many queries and call {@link #shutdown()} when done,
+ * or use try-with-resources. Its worker threads are daemon threads and exist
+ * only while a query runs, so a service that was never shut down does not keep
+ * the JVM alive.
+ */
+public class AiService implements AutoCloseable {
 
     /**
      * How often the wait for an answer wakes up to print progress.
      */
     private static final long PROGRESS_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(1);
+
+    /**
+     * How long {@link #shutdown()} waits for a cancelled call to end.
+     */
+    private static final long SHUTDOWN_WAIT_SECONDS = 5;
+
+    private static final AtomicInteger WORKER_COUNTER = new AtomicInteger();
 
     /**
      * Waits between attempts. Tests replace it so that they do not sleep.
@@ -28,6 +47,7 @@ public class AiService {
     private final ExecutorService executorService;
     private final AiOptions options;
     private final Sleeper sleeper;
+    private final AtomicBoolean shutDown = new AtomicBoolean();
     private LLMModel model;
     private double temperature;
 
@@ -74,8 +94,13 @@ public class AiService {
         this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
         // One thread per call in flight: an attempt that timed out may still
         // hold its thread until the HTTP client gives up, and the retry must
-        // not queue behind it.
-        this.executorService = Executors.newCachedThreadPool();
+        // not queue behind it. Idle threads end after 60 seconds, and all of
+        // them are daemon threads.
+        this.executorService = Executors.newCachedThreadPool(runnable -> {
+            Thread worker = new Thread(runnable, "ai-service-worker-" + WORKER_COUNTER.incrementAndGet());
+            worker.setDaemon(true);
+            return worker;
+        });
     }
 
     public AiService setModel(LLMModel model) {
@@ -105,6 +130,9 @@ public class AiService {
     }
 
     public String queryWithProgress(String prompt) {
+        if (shutDown.get()) {
+            throw new IllegalStateException("Query failed: this AiService has been shut down");
+        }
         try {
             LLMResponse response = completeWithRetries(buildRequest(prompt));
 
@@ -170,7 +198,7 @@ public class AiService {
                 return completeOnce(request);
             } catch (RuntimeException e) {
                 lastFailure = e;
-                if (attempt == maxAttempts || !LLMException.isRetryable(e)) {
+                if (attempt == maxAttempts || shutDown.get() || !LLMException.isRetryable(e)) {
                     break;
                 }
                 long waitMillis = options.backoffMillis(attempt);
@@ -327,20 +355,38 @@ public class AiService {
         return text == null || text.trim().isEmpty();
     }
 
+    /**
+     * Cancels a call in flight, stops the worker threads and shuts the LLM
+     * client down. Safe to call more than once; later calls do nothing. The
+     * workers are stopped even when the client fails to shut down, and that
+     * failure is then rethrown.
+     */
     public void shutdown() {
-        if (llmClient != null) {
-            llmClient.shutdown();
+        if (!shutDown.compareAndSet(false, true)) {
+            return;
         }
-        if (executorService != null && !executorService.isShutdown()) {
-            executorService.shutdown();
+        executorService.shutdownNow();
+        try {
+            llmClient.shutdown();
+        } finally {
             try {
-                if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
-                    executorService.shutdownNow();
-                }
+                executorService.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
-                executorService.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    public boolean isShutDown() {
+        return shutDown.get();
+    }
+
+    /**
+     * Same as {@link #shutdown()}, so that a service can be used in a
+     * try-with-resources block.
+     */
+    @Override
+    public void close() {
+        shutdown();
     }
 }
