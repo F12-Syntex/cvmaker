@@ -52,9 +52,6 @@ public class JobSearchService {
         "a[class*='Easy']"
     };
 
-    // Keyword fallback
-    private static final String[] EASY_APPLY_KEYWORDS = {"easy apply", "quick apply"};
-
     public JobSearchService(Page page, CrawlerConfig config, AbstractJobCrawler crawler) {
         this.page = page;
         this.config = config;
@@ -168,16 +165,7 @@ public class JobSearchService {
         }
 
         // 2. Keyword fallback
-        String text = jobCard.textContent();
-        if (text != null) {
-            String lower = text.toLowerCase();
-            for (String keyword : EASY_APPLY_KEYWORDS) {
-                if (lower.contains(keyword)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return ReedText.mentionsEasyApply(jobCard.textContent());
     }
 
     private int countMatches(String selector) {
