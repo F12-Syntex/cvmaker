@@ -1,6 +1,5 @@
 package com.cvmaker.crawler;
 
-import com.cvmaker.configuration.CrawlerConfig;
 import com.cvmaker.crawler.CrawlerFactory.CrawlerType;
 
 /**
@@ -12,20 +11,14 @@ public class JobCrawlerApp {
         CrawlerManager manager = new CrawlerManager();
 
         try {
-            // Example 1: Using factory pattern
+            // Create the crawler through the factory. For custom settings, pass a
+            // CrawlerConfig as the second argument of createCrawler.
             JobCrawler formCrawler = CrawlerFactory.createCrawler(CrawlerType.FORM);
             manager.addCrawler(formCrawler);
 
-            // Example 2: Custom configuration
-            CrawlerConfig customConfig = new CrawlerConfig();
-            customConfig.setMaxApplications(5);
-            customConfig.setDebugMode(true);
-
-            // Start a specific crawler
+            // Start a specific crawler (manager.startAllCrawlers() starts all added ones)
             manager.startCrawler(formCrawler);
 
-            // Or start all added crawlers
-            // manager.startAllCrawlers();
             // Wait for completion
             manager.waitForCompletion();
 

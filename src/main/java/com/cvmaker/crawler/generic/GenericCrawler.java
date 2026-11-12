@@ -79,9 +79,11 @@ public class GenericCrawler extends AbstractJobCrawler {
             waitForEnter();
 
             // Step 1: Analyze form with AI
+            visualizer.visualizeAction("Analyzing form with AI...");
             analyzer.analyzeForm();
 
             // Step 2: Fill form with AI-suggested values
+            visualizer.visualizeAction("Filling form...");
             filler.fillForm(analyzer.getFormContext());
 
         } catch (Exception e) {

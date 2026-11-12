@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -116,6 +117,49 @@ class AbstractJobCrawlerTest {
         assertThatThrownBy(crawler::openForLogin)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("setupBrowser()");
+    }
+
+    // ---- visualizer ----
+
+    @Test
+    void visualizerIsANoOpBeforeSetupBrowser() throws Exception {
+        TestCrawler crawler = newCrawler();
+
+        assertThat(crawler.getVisualizer()).isNotNull();
+        assertThat(crawler.getVisualizer().isEnabled()).isFalse();
+    }
+
+    @Test
+    void setupBrowserCreatesAnEnabledVisualizerWhenConfigured() throws Exception {
+        TestCrawler crawler = new TestCrawler(
+                CrawlerTestSupport.crawlerConfig(tempDir, "crawler.visualization.enabled=true"));
+
+        crawler.setupBrowser();
+
+        assertThat(crawler.getVisualizer().isEnabled()).isTrue();
+        verify(crawler.browser.page).addInitScript(PageVisualizer.INIT_SCRIPT);
+    }
+
+    @Test
+    void setupBrowserLeavesTheVisualizerOffWhenDisabledInConfig() throws Exception {
+        TestCrawler crawler = new TestCrawler(
+                CrawlerTestSupport.crawlerConfig(tempDir, "crawler.visualization.enabled=false"));
+
+        crawler.setupBrowser();
+
+        assertThat(crawler.getVisualizer().isEnabled()).isFalse();
+        verify(crawler.browser.page, never()).addInitScript(PageVisualizer.INIT_SCRIPT);
+    }
+
+    @Test
+    void closeSwitchesTheVisualizerOffAgain() throws Exception {
+        TestCrawler crawler = new TestCrawler(
+                CrawlerTestSupport.crawlerConfig(tempDir, "crawler.visualization.enabled=true"));
+        crawler.setupBrowser();
+
+        crawler.close();
+
+        assertThat(crawler.getVisualizer().isEnabled()).isFalse();
     }
 
     // ---- close ----

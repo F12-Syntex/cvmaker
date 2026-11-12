@@ -1,6 +1,9 @@
 package com.cvmaker.crawler;
 
+import java.util.Objects;
+
 import com.cvmaker.configuration.CrawlerConfig;
+import com.cvmaker.crawler.form.FormCrawler;
 import com.cvmaker.crawler.generic.GenericCrawler;
 import com.cvmaker.crawler.reed.ReedCrawler;
 
@@ -26,23 +29,19 @@ public class CrawlerFactory {
      * @param type The type of crawler to create
      * @param config The configuration to use
      * @return The created crawler
+     * @throws NullPointerException If the type is null
      * @throws Exception If crawler creation fails
      */
     public static JobCrawler createCrawler(CrawlerType type, CrawlerConfig config) throws Exception {
-        switch (type) {
-            case REED -> {
-                return new ReedCrawler(config);
-            }
-            case FORM -> {
-                return new com.cvmaker.crawler.form.FormCrawler(config);
-            }
-            case GENERIC -> {
-                return new GenericCrawler(config);
-            }
-            default ->
-                throw new IllegalArgumentException("Unsupported crawler type: " + type);
-        }
-        // Add more crawler types here as they are implemented
+        Objects.requireNonNull(type, "crawler type");
+
+        // A switch expression over the enum has no default branch: the compiler
+        // rejects it when a new CrawlerType has no case here.
+        return switch (type) {
+            case REED -> new ReedCrawler(config);
+            case FORM -> new FormCrawler(config);
+            case GENERIC -> new GenericCrawler(config);
+        };
     }
 
     /**

@@ -34,6 +34,11 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     protected BrowserContext context;
     protected Page page;
 
+    // Visual feedback in the browser window. Never null: a no-op object until
+    // setupBrowser() has run, after close(), and when
+    // crawler.visualization.enabled is false, so subclasses can call it freely.
+    protected PageVisualizer visualizer = PageVisualizer.disabled();
+
     // Configuration
     protected ConfigManager config;
     protected CrawlerConfig crawlerConfig;
@@ -112,6 +117,8 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             page.setDefaultTimeout(crawlerConfig.getPageTimeout());
             page.setDefaultNavigationTimeout(crawlerConfig.getNavigationTimeout());
 
+            this.visualizer = new PageVisualizer(page, crawlerConfig.isVisualizationEnabled());
+
             // 🔹 Automatically cache the main page on load
             page.onLoad(p -> PageInputCacheManagerCSV.saveInputCache(getCrawlerName(), p));
 
@@ -147,6 +154,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             page.waitForTimeout(crawlerConfig.getPageLoadDelay());
 
             System.out.println("Login to " + crawlerConfig.getBaseUrl() + " if needed, then press ENTER...");
+            visualizer.visualizeAction("Log in if needed, then press ENTER in the console");
             // Consume the whole line, so a leftover '\n' (Windows sends "\r\n")
             // does not answer the next prompt by itself.
             ConsolePrompt.waitForEnter(System.in);
@@ -185,6 +193,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
         page = null;
         context = null;
         playwright = null;
+        visualizer = PageVisualizer.disabled();
 
         closeQuietly("page", oldPage);
         closeQuietly("browser context", oldContext);
@@ -231,6 +240,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
             // so that two jobs with the same title do not overwrite each other.
             Path jobFolderPath = Paths.get(config.getOutputDirectory(), JobFolderNamer.folderName(job, jobContent));
             Files.createDirectories(jobFolderPath);
+            visualizer.visualizeAction("Generating CV: " + (job == null ? null : job.getTitle()));
 
             // Create config for this specific job
             config.setJobDescriptionContent(jobContent);
