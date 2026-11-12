@@ -12,7 +12,10 @@ import java.util.Map;
 import com.cvmaker.application.management.sheets.ApplicationRecency;
 import com.cvmaker.application.management.sheets.HyperlinkRequests;
 import com.cvmaker.application.management.sheets.SheetColumn;
+import com.cvmaker.application.management.sheets.SheetRef;
 import com.cvmaker.application.management.sheets.SheetRowMapper;
+import com.cvmaker.application.management.sheets.SheetsErrors;
+import com.cvmaker.application.management.sheets.SpreadsheetIdStore;
 import com.cvmaker.application.management.sheets.StatusFormatRules;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
@@ -52,8 +55,33 @@ public class GoogleSheetsService {
     private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final List<String> SCOPES = Collections.singletonList(SheetsScopes.SPREADSHEETS);
 
+    private static final String SPREADSHEET_TITLE = "Job Application Tracker";
+    /** Only what {@link SheetRef#firstOf} needs, so the lookup does not download cell data. */
+    private static final String SHEET_LOOKUP_FIELDS = "spreadsheetId,sheets.properties(sheetId,title,index)";
+
     private Sheets sheetsService;
     private String spreadsheetId;
+    private final SpreadsheetIdStore idStore;
+    /** The sheet (tab) that holds the tracker; looked up in {@link #initializeSpreadsheet()}. */
+    private SheetRef sheet = SheetRef.DEFAULT;
+
+    public GoogleSheetsService() {
+        this.idStore = SpreadsheetIdStore.inWorkingDirectory();
+    }
+
+    /**
+     * Creates a service on an existing Sheets client, without the OAuth flow of
+     * {@link #initialize()}. Used by tests.
+     *
+     * @param sheetsService the Sheets client
+     * @param spreadsheetId the configured spreadsheet ID, may be null or empty
+     * @param idStore where the ID of a spreadsheet created by this service is saved
+     */
+    GoogleSheetsService(Sheets sheetsService, String spreadsheetId, SpreadsheetIdStore idStore) {
+        this.sheetsService = sheetsService;
+        this.spreadsheetId = spreadsheetId;
+        this.idStore = idStore;
+    }
 
     public void initialize() throws IOException, GeneralSecurityException {
         final NetHttpTransport HTTP_TRANSPORT = GoogleNetHttpTransport.newTrustedTransport();
@@ -82,28 +110,73 @@ public class GoogleSheetsService {
         this.spreadsheetId = ApplicationConfig.getGoogleSheetId();
     }
 
+    /**
+     * Opens the tracker spreadsheet, creating it only when there is none.
+     *
+     * <p>The configured ID ({@code GOOGLE_SHEETS_ID}) is tried first, then the ID saved by an
+     * earlier run. A new spreadsheet is created only when no ID is known or every known ID
+     * answers 404 (it does not exist). Its ID is saved, so the next run reuses it. Any other
+     * failure (no access, bad credentials, rate limit, network) is rethrown and creates
+     * nothing.
+     *
+     * @throws IOException when a spreadsheet cannot be opened or created
+     */
     public void initializeSpreadsheet() throws IOException {
-        try {
-            sheetsService.spreadsheets().get(spreadsheetId).execute();
-        } catch (IOException e) {
-            Spreadsheet spreadsheet = new Spreadsheet()
-                    .setProperties(new SpreadsheetProperties()
-                            .setTitle("Job Application Tracker"));
+        List<String> candidates = idStore.candidates(spreadsheetId);
 
-            Spreadsheet created = sheetsService.spreadsheets().create(spreadsheet).execute();
-            spreadsheetId = created.getSpreadsheetId();
+        for (String candidate : candidates) {
+            Spreadsheet existing;
+            try {
+                existing = sheetsService.spreadsheets().get(candidate)
+                        .setFields(SHEET_LOOKUP_FIELDS)
+                        .execute();
+            } catch (IOException e) {
+                if (SheetsErrors.isNotFound(e)) {
+                    System.err.println("Spreadsheet " + candidate + " does not exist (HTTP 404).");
+                    continue;
+                }
+                throw new IOException("Cannot open spreadsheet " + candidate + ": " + SheetsErrors.describe(e)
+                        + ". No new spreadsheet was created; check GOOGLE_SHEETS_ID, the account's access to the"
+                        + " spreadsheet and the network.", e);
+            }
 
-            System.out.println("Created new spreadsheet with ID: " + spreadsheetId);
-            setupEnhancedSpreadsheetHeaders();
+            if (!candidate.equals(spreadsheetId) && spreadsheetId != null && !spreadsheetId.trim().isEmpty()) {
+                System.err.println("Using spreadsheet " + candidate + " from " + idStore.file()
+                        + " instead. Set GOOGLE_SHEETS_ID=" + candidate + " in .env.");
+            }
+            spreadsheetId = candidate;
+            sheet = SheetRef.firstOf(existing);
+            return;
         }
+
+        createSpreadsheet();
+    }
+
+    private void createSpreadsheet() throws IOException {
+        Spreadsheet spreadsheet = new Spreadsheet()
+                .setProperties(new SpreadsheetProperties()
+                        .setTitle(SPREADSHEET_TITLE));
+
+        Spreadsheet created = sheetsService.spreadsheets().create(spreadsheet).execute();
+        spreadsheetId = created.getSpreadsheetId();
+        sheet = SheetRef.firstOf(created);
+
+        System.out.println("Created new spreadsheet with ID: " + spreadsheetId);
+        try {
+            idStore.save(spreadsheetId);
+            System.out.println("Saved the ID to " + idStore.file() + ", so the next run reuses this spreadsheet."
+                    + " To make it permanent, add GOOGLE_SHEETS_ID=" + spreadsheetId + " to .env.");
+        } catch (IOException | IllegalArgumentException e) {
+            System.err.println("Could not save the spreadsheet ID to " + idStore.file() + " (" + e.getMessage()
+                    + "). Add GOOGLE_SHEETS_ID=" + spreadsheetId + " to .env, or the next run creates another"
+                    + " spreadsheet.");
+        }
+        setupEnhancedSpreadsheetHeaders();
     }
 
     // Modified bulkUpdateAllApplications to ensure only latest updates are shown
     public void bulkUpdateAllApplications(Map<String, JobApplicationData> consolidatedApplications) throws IOException {
         System.out.println("Starting bulk update of " + consolidatedApplications.size() + " applications...");
-
-        // Clear existing data (keeping headers)
-        clearExistingData();
 
         // Keep the most recent application per company
         Map<String, JobApplicationData> latestApplications
@@ -119,15 +192,19 @@ public class GoogleSheetsService {
             applicationsWithUrls.add(jobData);
         }
 
+        // Checked before clearing, so that an empty sync does not wipe the sheet
         if (allRows.isEmpty()) {
             System.out.println("No job-related applications to sync.");
             return;
         }
 
+        // Clear existing data (keeping headers)
+        clearExistingData();
+
         // Bulk insert all data at once
         ValueRange body = new ValueRange().setValues(allRows);
         sheetsService.spreadsheets().values()
-                .update(spreadsheetId, "A2:" + SheetColumn.lastLetter() + (allRows.size() + 1), body)
+                .update(spreadsheetId, sheet.range("A2:" + SheetColumn.lastLetter() + (allRows.size() + 1)), body)
                 .setValueInputOption("RAW")
                 .execute();
 
@@ -142,7 +219,7 @@ public class GoogleSheetsService {
     private void clearExistingData() throws IOException {
         // Get the current data to determine how many rows to clear
         ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, "A2:" + SheetColumn.lastLetter())
+                .get(spreadsheetId, sheet.range("A2:" + SheetColumn.lastLetter()))
                 .execute();
 
         List<List<Object>> values = response.getValues();
@@ -152,7 +229,7 @@ public class GoogleSheetsService {
             // Clear the range (this preserves formatting but removes data)
             com.google.api.services.sheets.v4.model.ClearValuesRequest clearRequest = new com.google.api.services.sheets.v4.model.ClearValuesRequest();
             sheetsService.spreadsheets().values()
-                    .clear(spreadsheetId, "A2:" + SheetColumn.lastLetter() + (rowsToDelete + 1), clearRequest)
+                    .clear(spreadsheetId, sheet.range("A2:" + SheetColumn.lastLetter() + (rowsToDelete + 1)), clearRequest)
                     .execute();
 
             System.out.println("Cleared " + rowsToDelete + " existing rows");
@@ -160,7 +237,7 @@ public class GoogleSheetsService {
     }
 
     private void addAllHyperlinksInBatch(List<JobApplicationData> applications) throws IOException {
-        List<Request> requests = HyperlinkRequests.forRows(0, applications);
+        List<Request> requests = HyperlinkRequests.forRows(sheet.sheetId(), applications);
 
         // Execute all hyperlink updates in batches to avoid request size limits
         if (!requests.isEmpty()) {
@@ -223,7 +300,7 @@ public class GoogleSheetsService {
             // Add new row
             ValueRange body = new ValueRange().setValues(Collections.singletonList(rowData));
             sheetsService.spreadsheets().values()
-                    .append(spreadsheetId, "A2:" + SheetColumn.lastLetter() + "2", body)
+                    .append(spreadsheetId, sheet.range("A2:" + SheetColumn.lastLetter() + "2"), body)
                     .setValueInputOption("RAW")
                     .setInsertDataOption("INSERT_ROWS")
                     .execute();
@@ -237,7 +314,7 @@ public class GoogleSheetsService {
         } else {
             // Update existing row
             ValueRange body = new ValueRange().setValues(Collections.singletonList(rowData));
-            String range = "A" + latestRowIndex + ":" + SheetColumn.lastLetter() + latestRowIndex;
+            String range = sheet.range("A" + latestRowIndex + ":" + SheetColumn.lastLetter() + latestRowIndex);
             sheetsService.spreadsheets().values()
                     .update(spreadsheetId, range, body)
                     .setValueInputOption("RAW")
@@ -293,7 +370,7 @@ public class GoogleSheetsService {
     }
 
     private void addHyperlinks(int rowIndex, JobApplicationData jobData) throws IOException {
-        List<Request> requests = HyperlinkRequests.forRow(0, rowIndex, jobData);
+        List<Request> requests = HyperlinkRequests.forRow(sheet.sheetId(), rowIndex, jobData);
 
         if (!requests.isEmpty()) {
             sheetsService.spreadsheets().batchUpdate(spreadsheetId,
@@ -323,7 +400,7 @@ public class GoogleSheetsService {
         requests.add(new Request().setDeleteDimension(
                 new com.google.api.services.sheets.v4.model.DeleteDimensionRequest()
                         .setRange(new DimensionRange()
-                                .setSheetId(0)
+                                .setSheetId(sheet.sheetId())
                                 .setDimension("ROWS")
                                 .setStartIndex(rowIndex - 1)
                                 .setEndIndex(rowIndex))));
@@ -334,7 +411,7 @@ public class GoogleSheetsService {
 
     private List<List<Object>> getExistingData() throws IOException {
         ValueRange response = sheetsService.spreadsheets().values()
-                .get(spreadsheetId, "A2:" + SheetColumn.lastLetter())
+                .get(spreadsheetId, sheet.range("A2:" + SheetColumn.lastLetter()))
                 .execute();
 
         List<List<Object>> values = response.getValues();
@@ -346,7 +423,7 @@ public class GoogleSheetsService {
         List<Object> headerValues = SheetRowMapper.headerRow();
 
         sheetsService.spreadsheets().values()
-                .update(spreadsheetId, "A1:" + SheetColumn.lastLetter() + "1",
+                .update(spreadsheetId, sheet.range("A1:" + SheetColumn.lastLetter() + "1"),
                         new ValueRange().setValues(Collections.singletonList(headerValues)))
                 .setValueInputOption("RAW")
                 .execute();
@@ -367,7 +444,7 @@ public class GoogleSheetsService {
 
         requests.add(new Request().setUpdateCells(new UpdateCellsRequest()
                 .setRange(new GridRange()
-                        .setSheetId(0)
+                        .setSheetId(sheet.sheetId())
                         .setStartRowIndex(0).setEndRowIndex(1)
                         .setStartColumnIndex(0).setEndColumnIndex(SheetColumn.count()))
                 .setRows(Collections.singletonList(new RowData().setValues(headerCells)))
@@ -377,7 +454,7 @@ public class GoogleSheetsService {
         for (SheetColumn column : SheetColumn.all()) {
             requests.add(new Request().setUpdateDimensionProperties(
                     new UpdateDimensionPropertiesRequest()
-                            .setRange(new DimensionRange().setSheetId(0).setDimension("COLUMNS")
+                            .setRange(new DimensionRange().setSheetId(sheet.sheetId()).setDimension("COLUMNS")
                                     .setStartIndex(column.index()).setEndIndex(column.index() + 1))
                             .setProperties(new DimensionProperties()
                                     .setPixelSize(column.pixelWidth())
@@ -393,7 +470,7 @@ public class GoogleSheetsService {
                 new com.google.api.services.sheets.v4.model.AddConditionalFormatRuleRequest()
                         .setRule(new com.google.api.services.sheets.v4.model.ConditionalFormatRule()
                                 .setRanges(Collections.singletonList(new GridRange()
-                                        .setSheetId(0)
+                                        .setSheetId(sheet.sheetId())
                                         .setStartRowIndex(1) // Start from row 2 (after header)
                                         .setStartColumnIndex(0) // Column A
                                         .setEndColumnIndex(lastVisibleColumnIndex))) // Through last visible column
@@ -420,7 +497,7 @@ public class GoogleSheetsService {
                 new com.google.api.services.sheets.v4.model.AddConditionalFormatRuleRequest()
                         .setRule(new com.google.api.services.sheets.v4.model.ConditionalFormatRule()
                                 .setRanges(Collections.singletonList(new GridRange()
-                                        .setSheetId(0)
+                                        .setSheetId(sheet.sheetId())
                                         .setStartRowIndex(1)
                                         .setStartColumnIndex(0)
                                         .setEndColumnIndex(lastVisibleColumnIndex)))
@@ -447,7 +524,7 @@ public class GoogleSheetsService {
                 new com.google.api.services.sheets.v4.model.AddConditionalFormatRuleRequest()
                         .setRule(new com.google.api.services.sheets.v4.model.ConditionalFormatRule()
                                 .setRanges(Collections.singletonList(new GridRange()
-                                        .setSheetId(0)
+                                        .setSheetId(sheet.sheetId())
                                         .setStartRowIndex(1)
                                         .setStartColumnIndex(0)
                                         .setEndColumnIndex(lastVisibleColumnIndex)))
@@ -472,14 +549,14 @@ public class GoogleSheetsService {
         // Freeze the first row
         requests.add(new Request().setUpdateSheetProperties(
                 new UpdateSheetPropertiesRequest().setProperties(
-                        new SheetProperties().setSheetId(0).setGridProperties(
+                        new SheetProperties().setSheetId(sheet.sheetId()).setGridProperties(
                                 new GridProperties().setFrozenRowCount(1)))
                         .setFields("gridProperties.frozenRowCount")));
 
         // Create a basic filter for visible columns only
         requests.add(new Request().setSetBasicFilter(new SetBasicFilterRequest()
                 .setFilter(new BasicFilter().setRange(
-                        new GridRange().setSheetId(0)
+                        new GridRange().setSheetId(sheet.sheetId())
                                 .setStartRowIndex(0).setStartColumnIndex(0)
                                 .setEndColumnIndex(lastVisibleColumnIndex)))));
 
