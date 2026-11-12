@@ -81,3 +81,47 @@ not touched. No constructor of `FormAnalyzer`, `FormFiller` or `FieldHandler` wa
 - `FormCrawler.radioChoiceText` still uses the preceding-label fallback for each radio choice, as
   before, which can return the question rather than the choice on some layouts.
 - Other selectors in `FormCrawler` (`xpath=ancestor::...`) are fixed strings and were not touched.
+
+## Item 26: FormCrawler classification uses substring matching that misfires
+
+**What was wrong**
+- `FormCrawler.isApplicant` and the other section rules used `String.contains`, so "name" matched
+  every `*Name` key ("CompanyName"), "tel" matched "hotel" and "git" matched "digit".
+- `isAction` matched "apply"/"submit"/"continue" in any key, label or value, so a textarea
+  labelled "Why do you want to apply?" was listed as an action.
+- `humanize` removed any run of 6+ characters from `[a-f0-9]`, deleting real words such as
+  "facade" and "accede".
+- None of it was tested.
+
+**What changed**
+- New pure `J/crawler/form/FieldClassifier.java`:
+  - `classify(tag, type, key, label)` returns a `Section` enum (`key()` gives the old map key).
+    Keys and labels are split into words (camel case, digits, punctuation, accents removed); a
+    keyword matches a run of consecutive words written together or apart ("first name" matches
+    `firstname`, `txtFirstName`; "email" matches `e-mail`), with an optional plural "s".
+    A bare "name" counts only when nothing, a qualifier ("your", "full") or a control prefix
+    ("txt", "tb", digits) stands before it.
+  - Rule order: buttons and submit/button/reset/image inputs are actions (no text matching any
+    more); file inputs are documents; checkboxes with consent words are consents (so "I agree to
+    share my email" is a consent, not applicant data); then applicant, eligibility, document
+    words, textarea or question words, other.
+  - Keyword lists are the old ones plus "middle name", "family name", "full name", "telephone",
+    "gitlab", "town", "zip", "eligible", "attachment".
+  - `niceName(tag, key, label, value)` and `humanize(s)` moved here. `humanize` drops GUIDs and
+    standalone hex runs of 6+ characters only when they contain a digit.
+- `J/crawler/form/FormCrawler.java`: `groupFields` calls `FieldClassifier`; the old `isAction`,
+  `isApplicant`, `isEligibility`, `isDocument`, `isConsent`, `isQuestion`, `niceName`, `humanize`,
+  `containsAny` and `clean` were removed. Output format is unchanged.
+
+**How verified**
+- `src/test/java/com/cvmaker/crawler/form/FieldClassifierTest.java`: a 34-row classification table
+  (including the old misfires "Hotel chain", "Number of digits", "CompanyName", "Reference name",
+  "Why do you want to apply?", `applyDate`), a humanize table ("facade" and "accede" kept, hashes
+  and GUIDs removed), niceName, word splitting and phrase matching. "facade" and the misfire rows
+  fail against the old logic.
+- `mvn -q test` passes (73 tests in total).
+
+**Left / not done**
+- Keyword lists are English only and still heuristic; "Available to start" is not treated as
+  eligibility (only "availability" is), as before.
+- `FormCrawler` still has no Playwright-level test; only the pure rules are tested.

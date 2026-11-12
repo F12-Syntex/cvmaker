@@ -305,15 +305,9 @@ public class FormCrawler extends AbstractJobCrawler {
         map.put("other", new ArrayList<>());
 
         for (Field f : fields) {
-            String nice = niceName(f);
-
-            if (isAction(f)) map.get("actions").add(f.withNice(nice));
-            else if (isApplicant(f)) map.get("applicant").add(f.withNice(nice));
-            else if (isEligibility(f)) map.get("eligibility").add(f.withNice(nice));
-            else if (isDocument(f)) map.get("documents").add(f.withNice(nice));
-            else if (isConsent(f)) map.get("consents").add(f.withNice(nice));
-            else if (isQuestion(f)) map.get("questions").add(f.withNice(nice));
-            else map.get("other").add(f.withNice(nice));
+            String nice = FieldClassifier.niceName(f.tag, f.key, f.label, f.value);
+            FieldClassifier.Section section = FieldClassifier.classify(f.tag, f.type, f.key, f.label);
+            map.get(section.key()).add(f.withNice(nice));
         }
         return map;
     }
@@ -345,64 +339,6 @@ public class FormCrawler extends AbstractJobCrawler {
             }
         }
         System.out.println();
-    }
-
-    // Heuristics for names/sections
-
-    private boolean isAction(Field f) {
-        if ("button".equals(f.tag) || "submit".equals(f.type)) return true;
-        String n = lower(f.key + " " + f.label + " " + f.value);
-        return n.contains("submit") || n.contains("apply") || n.contains("continue");
-    }
-
-    private boolean isApplicant(Field f) {
-        String n = lower(f.key + " " + f.label);
-        return containsAny(n, "first name","firstname","forename","given name",
-                "surname","last name","lastname","name",
-                "email","e-mail","phone","mobile","tel",
-                "linkedin","git","github",
-                "city","postcode","postal","address");
-    }
-
-    private boolean isEligibility(Field f) {
-        String n = lower(f.key + " " + f.label);
-        return containsAny(n, "eligibility","right to work","work permit","visa","sponsorship",
-                "security clearance","notice period","availability","salary expectation","expected salary");
-    }
-
-    private boolean isDocument(Field f) {
-        String n = lower(f.key + " " + f.label);
-        return "file".equals(f.type) || containsAny(n, "cv","resume","cover letter","portfolio","upload","document");
-    }
-
-    private boolean isConsent(Field f) {
-        String n = lower(f.key + " " + f.label);
-        return "checkbox".equals(f.type) && containsAny(n, "terms","conditions","privacy","consent","gdpr","data protection","agree");
-    }
-
-    private boolean isQuestion(Field f) {
-        String n = lower(f.key + " " + f.label);
-        return "textarea".equals(f.tag) || containsAny(n, "question","why","motivation","explain","experience","summary","statement","supporting");
-    }
-
-    private String niceName(Field f) {
-        if (!isEmpty(f.label)) return clean(f.label);
-        if (!isEmpty(f.key)) {
-            String[] parts = f.key.split("\\$");
-            String last = parts[parts.length - 1]
-                    .replaceAll("(TextBoxControl|DropDownListControl|RadioButtonListControl|CheckBoxControl)$", "")
-                    .replaceAll("^SingleLineTextBox", "")
-                    .replaceAll("^DropDownList", "")
-                    .replaceAll("^RadioButtonList", "")
-                    .replaceAll("^AsynchronousFileUpload", "");
-            String human = humanize(last);
-            if (!isEmpty(human)) return human;
-        }
-        if ("button".equals(f.tag)) {
-            String t = trimmed(f.value);
-            if (!isEmpty(t)) return t;
-        }
-        return "(unnamed field)";
     }
 
     // Value helpers
@@ -453,17 +389,6 @@ public class FormCrawler extends AbstractJobCrawler {
         return LabelResolver.findLabel(el, id);
     }
 
-    private String humanize(String s) {
-        if (isEmpty(s)) return "";
-        String spaced = s.replaceAll("([a-z])([A-Z])", "$1 $2")
-                .replaceAll("([A-Za-z])([0-9])", "$1 $2")
-                .replaceAll("_+", " ")
-                .replaceAll("([a-f0-9]{6,})", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        return spaced;
-    }
-
     private String trimmed(String... xs) {
         for (String x : xs) {
             if (!isEmpty(x)) {
@@ -474,7 +399,6 @@ public class FormCrawler extends AbstractJobCrawler {
         return "";
     }
 
-    private boolean containsAny(String hay, String... needles) { for (String n : needles) if (hay.contains(n)) return true; return false; }
     private String lower(String s) { return s == null ? "" : s.toLowerCase(); }
     private String nz(String s) { return s == null ? "" : s; }
     private boolean isEmpty(String s) { return s == null || s.trim().isEmpty(); }
@@ -487,11 +411,6 @@ public class FormCrawler extends AbstractJobCrawler {
             if (c.selected) return c.text == null ? "" : c.text;
         }
         return "";
-    }
-
-    private String clean(String s) {
-        if (s == null) return "";
-        return s.replaceAll("\\s+", " ").trim();
     }
 
     // Models
