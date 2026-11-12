@@ -198,10 +198,21 @@ function contentWithRuntime(document) {
   });
 }
 
+// Scraping reports its end with a jobSearchComplete message, not with the start reply.
+async function waitForCompletion(content) {
+  for (let i = 0; i < 200; i++) {
+    const done = content.chrome.calls.runtimeMessages.find(r => r.message.action === 'jobSearchComplete');
+    if (done) return done.message;
+    await flush(1);
+  }
+  throw new Error('scraping did not complete');
+}
+
 test('content: scraping collects jobs and asks the background to download them', async () => {
   const content = contentWithRuntime(linkedInPage([jobCard('Dev', 'Acme', 11), jobCard('QA', 'Beta', 12)]));
   const result = await content.send({ action: 'startLinkedInScraping', maxPages: 3, jobTitle: 'Dev', location: 'Leeds' });
   assert.equal(result.success, true);
+  await waitForCompletion(content);
 
   const messages = content.chrome.calls.runtimeMessages.map(r => r.message);
   const download = messages.find(m => m.action === 'downloadJobs');
@@ -219,6 +230,7 @@ test('content: scraping collects jobs and asks the background to download them',
 test('content: missing search parameters do not crash the download', async () => {
   const content = contentWithRuntime(linkedInPage([]));
   await content.send({ action: 'startLinkedInScraping' });
+  await waitForCompletion(content);
   const messages = content.chrome.calls.runtimeMessages.map(r => r.message);
   const done = messages.find(m => m.action === 'jobSearchComplete');
   assert.equal(done.success, true, done.error);
@@ -227,11 +239,15 @@ test('content: missing search parameters do not crash the download', async () =>
 
 test('content: stop ends the scraping loop', async () => {
   const content = contentWithRuntime(linkedInPage([]));
-  const running = content.send({ action: 'startLinkedInScraping', maxPages: 5, jobTitle: 'Dev' });
+  const started = await content.send({ action: 'startLinkedInScraping', maxPages: 5, jobTitle: 'Dev' });
+  assert.equal(started.success, true);
+  // A second start while running is refused.
+  const second = await content.send({ action: 'startLinkedInScraping', maxPages: 5, jobTitle: 'Dev' });
+  assert.equal(second.success, false);
   const stopReply = await content.send({ action: 'stopLinkedInScraping' });
   assert.equal(stopReply.success, true);
   assert.equal(stopReply.wasSearching, true);
-  await running;
+  await waitForCompletion(content);
 
   const messages = content.chrome.calls.runtimeMessages.map(r => r.message);
   const progress = messages.filter(m => m.action === 'jobSearchProgress');

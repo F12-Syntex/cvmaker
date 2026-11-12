@@ -232,7 +232,151 @@ Scraped: ${new Date(job.scraped).toLocaleString()}
     return `data:text/plain;charset=utf-8;base64,${btoa(binary)}`;
   }
 
+  // --- AI requests (built and sent only by the service worker) ---
+
+  // Files injected on demand into a tab; there is no manifest content script.
+  const CONTENT_SCRIPT_FILES = ['lib/fields.js', 'content.js'];
+
+  const DEFAULT_MODEL = 'gpt-4.1-mini';
+  const MAX_PROFILE_CHARS = 8000;
+  const MAX_CONTEXT_CHARS = 400;
+  const MAX_OPTIONS = 200;
+
+  function limitText(value, max) {
+    if (value === undefined || value === null) return '';
+    return String(value).replace(/\s+/g, ' ').trim().substring(0, max);
+  }
+
+  // Model names are stored by the popup; anything odd falls back to the default.
+  function normalizeModel(model) {
+    const name = typeof model === 'string' ? model.trim() : '';
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(name) ? name : DEFAULT_MODEL;
+  }
+
+  // GPT-5 and o-series models reject `temperature` and spend tokens on reasoning.
+  function isReasoningModel(model) {
+    return /^(gpt-5|o\d)/i.test(model);
+  }
+
+  function buildChatCompletionRequest(model, prompt) {
+    const name = normalizeModel(model);
+    const body = {
+      model: name,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant that fills out job application forms. Return only the requested value with no extra text, quotes, or explanations. Be concise and professional.'
+        },
+        { role: 'user', content: String(prompt) }
+      ]
+    };
+    if (isReasoningModel(name)) {
+      body.max_completion_tokens = 2000;
+      body.reasoning_effort = 'low';
+    } else {
+      body.max_completion_tokens = 300;
+      body.temperature = 0.3;
+    }
+    return body;
+  }
+
+  function parseChatCompletion(data) {
+    const choice = data && Array.isArray(data.choices) ? data.choices[0] : null;
+    const content = choice && choice.message ? choice.message.content : null;
+    if (typeof content !== 'string') throw new Error('OpenAI returned no text');
+    return content.trim();
+  }
+
+  // Removes wrapping quotes the model sometimes adds.
+  function cleanAIResponse(text) {
+    return String(text || '').replace(/^["']|["']$/g, '').trim();
+  }
+
+  const FIELD_REQUESTS = {
+    email: 'the user\'s email address',
+    phone: 'the user\'s phone number in standard format',
+    firstName: 'only the user\'s first name',
+    lastName: 'only the user\'s last name',
+    fullName: 'the user\'s full name',
+    address: 'the user\'s street address',
+    city: 'the user\'s city',
+    state: 'the user\'s state or province',
+    zipCode: 'the user\'s zip or postal code',
+    country: 'the user\'s country',
+    company: 'the user\'s current or most recent company name',
+    position: 'the user\'s current job title or desired position',
+    education: 'relevant education information (degree and school)',
+    skills: 'relevant skills for this field (comma-separated)',
+    experience: 'brief professional experience summary',
+    coverLetter: 'a brief professional response (2-3 sentences maximum)',
+    linkedin: 'the user\'s LinkedIn profile URL',
+    website: 'the user\'s website or portfolio URL',
+    salary: 'an appropriate salary expectation based on the role',
+    date: 'an appropriate date in YYYY-MM-DD format',
+    workAuthorization: '"Yes" if the user is authorized to work, otherwise "No"',
+    motivation: 'a brief explanation of interest or motivation (1-2 sentences)'
+  };
+
+  // `field` and `jobContext` come from the web page, so they are length-limited here.
+  function buildFieldPrompt(userData, field, jobContext) {
+    const f = field || {};
+    const type = Object.prototype.hasOwnProperty.call(FIELD_REQUESTS, f.type) ? f.type : 'generic';
+    const context = limitText(f.context, MAX_CONTEXT_CHARS);
+    let prompt = `User Information:\n${limitText(userData, MAX_PROFILE_CHARS)}\n\n`;
+    const page = limitText(jobContext, MAX_CONTEXT_CHARS);
+    if (page) prompt += `Page Context: ${page}\n\n`;
+    prompt += `Field Information:\nType: ${type}\nContext: ${context}\n` +
+      `Placeholder: ${limitText(f.placeholder, 200)}\nLabel: ${limitText(f.label, 200)}\n\nPlease provide `;
+    prompt += type === 'generic'
+      ? `an appropriate response for this field based on the context: ${context}`
+      : FIELD_REQUESTS[type];
+    return prompt;
+  }
+
+  function sanitizeOptions(options) {
+    if (!Array.isArray(options)) return [];
+    return options.slice(0, MAX_OPTIONS).map(option => limitText(option, 200)).filter(Boolean);
+  }
+
+  function buildSelectPrompt(userData, options, fieldContext, jobContext) {
+    return `User Information: ${limitText(userData, MAX_PROFILE_CHARS)}\n\n` +
+      `Select the best option from these choices: ${sanitizeOptions(options).join(', ')}\n\n` +
+      `Field context: ${limitText(fieldContext, MAX_CONTEXT_CHARS)}\n` +
+      `Job context: ${limitText(jobContext, MAX_CONTEXT_CHARS)}\n\n` +
+      'Respond with only the exact option text:';
+  }
+
+  // Index of the option that best matches the AI answer, or -1. Exact matches win over
+  // partial ones, and empty option texts never match.
+  function matchOption(optionTexts, answer) {
+    const wanted = String(answer || '').toLowerCase().trim();
+    if (!wanted) return -1;
+    const texts = (optionTexts || []).map(text => String(text || '').toLowerCase().trim());
+    const exact = texts.indexOf(wanted);
+    if (exact >= 0) return exact;
+    return texts.findIndex(text => text && (text.includes(wanted) || wanted.includes(text)));
+  }
+
+  // Masks anything that looks like an OpenAI key (OpenAI echoes part of a bad key in errors).
+  function redactSecrets(text) {
+    return String(text === undefined || text === null ? '' : text)
+      .replace(/sk-[A-Za-z0-9_*.-]{4,}/g, 'sk-[redacted]');
+  }
+
   const api = {
+    CONTENT_SCRIPT_FILES,
+    redactSecrets,
+    DEFAULT_MODEL,
+    limitText,
+    normalizeModel,
+    isReasoningModel,
+    buildChatCompletionRequest,
+    parseChatCompletion,
+    cleanAIResponse,
+    buildFieldPrompt,
+    sanitizeOptions,
+    buildSelectPrompt,
+    matchOption,
     normalizeSearchRequest,
     shouldStartScraping,
     buildJobsFilename,

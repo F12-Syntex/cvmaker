@@ -1,3 +1,14 @@
+// Content script. It is not declared in the manifest: the background or the popup injects it
+// (after lib/fields.js) into the tab the user acted on, or into the LinkedIn search tab.
+// It never sees the OpenAI API key or the user's profile. It describes each field to the
+// background, which builds the prompt, calls OpenAI and returns only the text for that field.
+//
+// The body is wrapped so that injecting it twice into the same page is harmless: the second
+// copy returns at once and the first copy keeps handling messages.
+(function () {
+if (globalThis.__autoApplyContentScriptLoaded) return;
+globalThis.__autoApplyContentScriptLoaded = true;
+
 // Store the last right-clicked element
 let lastClickedElement = null;
 let isSearching = false;
@@ -46,6 +57,25 @@ function notifyExtension(message) {
     } catch (error) {
         // The extension was reloaded and this content script is orphaned.
     }
+}
+
+// Asks the background for an AI completion. Throws with the background's error message.
+async function askBackground(message) {
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response || response.success !== true) {
+        throw new Error((response && response.error) || 'No answer from the extension');
+    }
+    return typeof response.text === 'string' ? response.text : '';
+}
+
+// The element to fill: the last right-clicked element if this script saw the click, otherwise
+// the focused form field (right-clicking a field focuses it, and this script is injected
+// only after the click).
+function resolveTargetElement() {
+    if (lastClickedElement && lastClickedElement.isConnected !== false) return lastClickedElement;
+    const active = document.activeElement;
+    if (active && active !== document.body && isInputField(active)) return active;
+    return null;
 }
 
 function findInputFieldsInElement(element) {
@@ -383,14 +413,13 @@ async function downloadJobsFile(content, jobTitle) {
 }
 
 // AI form filling functionality
-async function fillElementWithAI(apiKey, userData) {
+async function fillElementWithAI() {
     let fieldsCount = 0;
     let errors = [];
 
     try {
-        // The context menu gives no usable coordinates, so the element recorded by the
-        // contextmenu listener is the target.
-        const targetElement = lastClickedElement;
+        // The context menu gives no usable coordinates.
+        const targetElement = resolveTargetElement();
 
         if (!targetElement || targetElement.isConnected === false) {
             throw new Error('Could not find target element. Right-click the form element again.');
@@ -419,16 +448,16 @@ async function fillElementWithAI(apiKey, userData) {
                 let result = null;
 
                 if (input.tagName === 'SELECT') {
-                    result = await fillSelectWithAI(apiKey, userData, input, jobContext);
+                    result = await fillSelectWithAI(input, jobContext);
                 } else {
                     const fieldInfo = detectFieldType(input);
                     console.log(`Processing field: ${fieldInfo.type} - ${fieldInfo.context.substring(0, 50)}`);
 
-                    const aiResponse = await generateAIResponse(apiKey, userData, fieldInfo, jobContext);
+                    const aiResponse = await generateAIResponse(fieldInfo, jobContext);
 
                     if (aiResponse && aiResponse.length > 0) {
                         input.focus();
-                        input.style.backgroundColor = '#e8f5e8';
+                        input.style.backgroundColor= '#e8f5e8';
                         input.value = aiResponse;
 
                         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -483,87 +512,46 @@ async function fillElementWithAI(apiKey, userData) {
 
 // Only native <select> elements are handled here. Custom comboboxes are text inputs and are
 // filled as text by the callers.
-async function fillSelectWithAI(apiKey, userData, element, jobContext) {
+async function fillSelectWithAI(element, jobContext) {
     if (element.tagName === 'SELECT') {
-        return await fillNativeSelectWithAI(apiKey, userData, element, jobContext);
+        return await fillNativeSelectWithAI(element, jobContext);
     }
     return false;
 }
 
-async function fillNativeSelectWithAI(apiKey, userData, select, jobContext) {
+async function fillNativeSelectWithAI(select, jobContext) {
     if (select.options.length <= 1 || select.disabled) return false;
 
     try {
         const fieldInfo = detectFieldType(select);
-        const options = Array.from(select.options).slice(1).map(opt => opt.text).join(', ');
+        // The first option is usually a "Please select" placeholder.
+        const options = Array.from(select.options).slice(1);
+        const optionTexts = options.map(opt => opt.text);
 
-        if (options.length === 0) return false;
+        const aiResponse = await askBackground({
+            action: "aiChooseOption",
+            options: optionTexts,
+            field: { context: fieldInfo.context },
+            jobContext: jobContext
+        });
+        const index = AutoApplyLib.matchOption(optionTexts, aiResponse);
+        if (index >= 0) {
+            const matchingOption = options[index];
+            select.style.backgroundColor = '#e8f5e8';
+            select.value = matchingOption.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
 
-        const prompt = `User Information: ${userData}\n\nSelect the best option from these choices: ${options}\n\nField context: ${fieldInfo.context}\nJob context: ${jobContext}\n\nRespond with only the exact option text:`;
+            setTimeout(() => {
+                select.style.backgroundColor = '';
+            }, 1000);
 
-        const aiResponse = await callOpenAI(apiKey, prompt);
-        if (aiResponse) {
-            const matchingOption = Array.from(select.options).find(option =>
-                option.text.toLowerCase().trim() === aiResponse.toLowerCase().trim() ||
-                option.text.toLowerCase().includes(aiResponse.toLowerCase()) ||
-                aiResponse.toLowerCase().includes(option.text.toLowerCase())
-            );
-
-            if (matchingOption) {
-                select.style.backgroundColor = '#e8f5e8';
-                select.value = matchingOption.value;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-
-                setTimeout(() => {
-                    select.style.backgroundColor = '';
-                }, 1000);
-
-                console.log(`Selected option: ${matchingOption.text}`);
-                return true;
-            }
+            console.log(`Selected option: ${matchingOption.text}`);
+            return true;
         }
         return false;
     } catch (error) {
         console.error('Error with native select:', error);
         return false;
-    }
-}
-
-async function callOpenAI(apiKey, prompt) {
-    try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-3.5-turbo',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a helpful assistant that fills out job application forms. Return only the requested value with no extra text, quotes, or explanations. Be concise and professional.'
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
-                ],
-                max_tokens: 150,
-                temperature: 0.3
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-        }
-
-        const data = await response.json();
-        return data.choices[0].message.content.trim();
-    } catch (error) {
-        console.error('OpenAI API call failed:', error);
-        throw error;
     }
 }
 
@@ -608,98 +596,17 @@ function detectFieldType(element) {
     };
 }
 
-async function generateAIResponse(apiKey, userData, fieldInfo, jobContext = '') {
+// The background builds the prompt from the field description and the stored profile.
+async function generateAIResponse(fieldInfo, jobContext = '') {
     const { type, context, placeholder, label } = fieldInfo;
-
-    let prompt = `User Information:\n${userData}\n\n`;
-
-    if (jobContext) {
-        prompt += `Page Context: ${jobContext}\n\n`;
-    }
-
-    prompt += `Field Information:\nType: ${type}\nContext: ${context}\nPlaceholder: ${placeholder}\nLabel: ${label}\n\nPlease provide `;
-
-    switch (type) {
-        case 'email':
-            prompt += 'the user\'s email address';
-            break;
-        case 'phone':
-            prompt += 'the user\'s phone number in standard format';
-            break;
-        case 'firstName':
-            prompt += 'only the user\'s first name';
-            break;
-        case 'lastName':
-            prompt += 'only the user\'s last name';
-            break;
-        case 'fullName':
-            prompt += 'the user\'s full name';
-            break;
-        case 'address':
-            prompt += 'the user\'s street address';
-            break;
-        case 'city':
-            prompt += 'the user\'s city';
-            break;
-        case 'state':
-            prompt += 'the user\'s state or province';
-            break;
-        case 'zipCode':
-            prompt += 'the user\'s zip or postal code';
-            break;
-        case 'country':
-            prompt += 'the user\'s country';
-            break;
-        case 'company':
-            prompt += 'the user\'s current or most recent company name';
-            break;
-        case 'position':
-            prompt += 'the user\'s current job title or desired position';
-            break;
-        case 'education':
-            prompt += 'relevant education information (degree and school)';
-            break;
-        case 'skills':
-            prompt += 'relevant skills for this field (comma-separated)';
-            break;
-        case 'experience':
-            prompt += 'brief professional experience summary';
-            break;
-        case 'coverLetter':
-            prompt += 'a brief professional response (2-3 sentences maximum)';
-            break;
-        case 'linkedin':
-            prompt += 'the user\'s LinkedIn profile URL';
-            break;
-        case 'website':
-            prompt += 'the user\'s website or portfolio URL';
-            break;
-        case 'salary':
-            prompt += 'an appropriate salary expectation based on the role';
-            break;
-        case 'date':
-            prompt += 'an appropriate date in YYYY-MM-DD format';
-            break;
-        case 'workAuthorization':
-            prompt += '"Yes" if the user is authorized to work, otherwise "No"';
-            break;
-        case 'motivation':
-            prompt += 'a brief explanation of interest or motivation (1-2 sentences)';
-            break;
-        default:
-            prompt += `an appropriate response for this field based on the context: ${context}`;
-    }
-
-    try {
-        const response = await callOpenAI(apiKey, prompt);
-        return response.replace(/^["']|["']$/g, '').trim();
-    } catch (error) {
-        console.error('Failed to generate AI response:', error);
-        throw error;
-    }
+    return askBackground({
+        action: "aiFillField",
+        field: { type, context, placeholder: placeholder || '', label: label || '' },
+        jobContext: jobContext
+    });
 }
 
-async function fillFormWithAI(apiKey, userData) {
+async function fillFormWithAI() {
     let fieldsCount = 0;
     let errors = [];
 
@@ -721,7 +628,7 @@ async function fillFormWithAI(apiKey, userData) {
                 const fieldInfo = detectFieldType(input);
                 console.log(`Processing field: ${fieldInfo.type} - ${fieldInfo.context.substring(0, 50)}`);
 
-                const aiResponse = await generateAIResponse(apiKey, userData, fieldInfo, jobContext);
+                const aiResponse = await generateAIResponse(fieldInfo, jobContext);
 
                 if (aiResponse && aiResponse.length > 0) {
                     input.focus();
@@ -747,7 +654,7 @@ async function fillFormWithAI(apiKey, userData) {
             if (select.options.length <= 1 || select.disabled) continue;
 
             try {
-                const result = await fillSelectWithAI(apiKey, userData, select, jobContext);
+                const result = await fillSelectWithAI(select, jobContext);
                 if (result) {
                     fieldsCount++;
                 }
@@ -829,7 +736,7 @@ function analyzePage() {
 // Listen for messages from popup and background script
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.action === "fillFormWithAI") {
-        fillFormWithAI(request.apiKey, request.userData)
+        fillFormWithAI()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
@@ -841,15 +748,18 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ success: false, error: error.message });
         }
     } else if (request.action === "fillElementWithAI") {
-        fillElementWithAI(request.apiKey, request.userData)
+        fillElementWithAI()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     } else if (request.action === "startLinkedInScraping") {
+        // Answer at once; scraping takes minutes and reports through jobSearchComplete.
+        const alreadyRunning = isSearching;
         startLinkedInScraping(request.maxPages, request.jobTitle, request.location)
-            .then(result => sendResponse(result))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true;
+            .catch(error => console.error('LinkedIn scraping error:', error));
+        sendResponse(alreadyRunning
+            ? { success: false, error: 'A search is already running in this tab' }
+            : { success: true, started: true });
     } else if (request.action === "stopLinkedInScraping") {
         sendResponse(stopLinkedInScraping());
     } else if (request.action === "analyzePage") {
@@ -857,3 +767,5 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         sendResponse(result);
     }
 });
+
+})();

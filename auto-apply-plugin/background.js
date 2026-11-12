@@ -1,12 +1,31 @@
 // Pure helpers shared with the content script and the tests.
 importScripts('lib/fields.js');
 
-// Create context menu when extension is installed
+// Security model:
+// - The OpenAI API key and the user's profile are read here, in the service worker, and are
+//   never sent to a web page or a content script. Content scripts send field descriptions and
+//   get back only the generated text for one field.
+// - Content scripts are not declared in the manifest. They are injected on demand into the tab
+//   the user acted on (activeTab) or into the LinkedIn search tab (host permission).
+// - storage.local is limited to extension pages and this worker, so a content script could not
+//   read the key even if it tried.
+if (chrome.storage.local.setAccessLevel) {
+  chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+    .catch(error => console.error('Could not restrict storage access:', error));
+}
+
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+
+// Create context menu when extension is installed or updated
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "ai-fill-element",
-    title: "🤖 AI Fill Fields in This Element",
-    contexts: ["all"]
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "ai-fill-element",
+      title: "🤖 AI Fill This Field",
+      // Right-clicking a form field focuses it, which is how the injected content script
+      // finds it: the script is not on the page before the click.
+      contexts: ["editable"]
+    });
   });
 });
 
@@ -32,27 +51,79 @@ function notifyExtension(message) {
   }
 }
 
+// Injects the content script (and the helpers it needs) into a tab. Safe to call repeatedly:
+// content.js ignores a second injection.
+function injectContentScript(tabId, frameIds) {
+  const target = { tabId };
+  if (Array.isArray(frameIds)) target.frameIds = frameIds;
+  return chrome.scripting.executeScript({ target, files: AutoApplyLib.CONTENT_SCRIPT_FILES });
+}
+
+async function getAiSettings() {
+  const stored = await chrome.storage.local.get(['openaiApiKey', 'userData', 'openaiModel']);
+  return {
+    apiKey: stored.openaiApiKey || '',
+    userData: stored.userData || '',
+    model: AutoApplyLib.normalizeModel(stored.openaiModel)
+  };
+}
+
+async function callOpenAI(prompt) {
+  const settings = await getAiSettings();
+  if (!settings.apiKey) throw new Error('No OpenAI API key saved. Open the extension popup to add one.');
+
+  const response = await fetch(OPENAI_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${settings.apiKey}`
+    },
+    body: JSON.stringify(AutoApplyLib.buildChatCompletionRequest(settings.model, prompt))
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const detail = errorData && errorData.error && errorData.error.message ? errorData.error.message : 'Unknown error';
+    throw new Error(`OpenAI API error: ${response.status} - ${detail}`);
+  }
+  return AutoApplyLib.parseChatCompletion(await response.json());
+}
+
+// Content script asks for the value of one text field.
+async function completeField(request) {
+  const { userData } = await getAiSettings();
+  const prompt = AutoApplyLib.buildFieldPrompt(userData, request.field, request.jobContext);
+  return { success: true, text: AutoApplyLib.cleanAIResponse(await callOpenAI(prompt)) };
+}
+
+// Content script asks which option of a <select> to choose.
+async function chooseOption(request) {
+  const options = AutoApplyLib.sanitizeOptions(request.options);
+  if (options.length === 0) return { success: true, text: '' };
+  const { userData } = await getAiSettings();
+  const field = request.field || {};
+  const prompt = AutoApplyLib.buildSelectPrompt(userData, options, field.context, request.jobContext);
+  return { success: true, text: AutoApplyLib.cleanAIResponse(await callOpenAI(prompt)) };
+}
+
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== "ai-fill-element" || !tab) return;
   try {
-    // Get stored configuration
-    const result = await chrome.storage.local.get(['openaiApiKey', 'userData']);
-
-    if (!result.openaiApiKey || !result.userData) {
+    const settings = await getAiSettings();
+    if (!settings.apiKey || !settings.userData) {
       showNotification('Open the extension popup and save your API key and profile first.');
       // openPopup is not available in every Chrome version and needs a user gesture.
       if (chrome.action.openPopup) chrome.action.openPopup().catch(() => {});
       return;
     }
 
-    // The content script fills the element it saw the right-click on. OnClickData has no
-    // click coordinates, so none are sent.
-    await chrome.tabs.sendMessage(tab.id, {
-      action: "fillElementWithAI",
-      apiKey: result.openaiApiKey,
-      userData: result.userData
-    });
+    // The click granted activeTab for this tab; inject into the frame that was clicked.
+    const frameId = typeof info.frameId === 'number' ? info.frameId : 0;
+    await injectContentScript(tab.id, [frameId]);
+    // No key, no profile and no coordinates: the content script fills the focused field and
+    // asks this worker for each value.
+    await chrome.tabs.sendMessage(tab.id, { action: "fillElementWithAI" }, { frameId });
   } catch (error) {
     console.error('Error handling context menu click:', error);
     showNotification(`Could not fill fields on this page: ${error.message}`);
@@ -101,6 +172,8 @@ async function maybeStartScraping(tabId, changeInfo) {
   await saveSearch({ ...search, started: true });
   notifyExtension({ action: "linkedinLoaded", tabId: tabId });
   try {
+    // Allowed by the www.linkedin.com host permission.
+    await injectContentScript(tabId);
     await chrome.tabs.sendMessage(tabId, {
       action: "startLinkedInScraping",
       maxPages: search.maxPages,
@@ -138,7 +211,8 @@ function respond(promise, sendResponse) {
     .then(result => sendResponse(result))
     .catch(error => {
       console.error(error);
-      sendResponse({ success: false, error: error.message });
+      // Error text may reach a page's content script; never let a key fragment through.
+      sendResponse({ success: false, error: AutoApplyLib.redactSecrets(error.message) });
     });
   return true; // keep the message channel open for the async response
 }
@@ -148,6 +222,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (!request || sender.id !== chrome.runtime.id) return undefined;
 
   switch (request.action) {
+    case "aiFillField":
+    case "aiChooseOption":
+      // Only the injected content script asks for completions; it runs in a tab.
+      if (!sender.tab) {
+        sendResponse({ success: false, error: 'AI requests must come from a page' });
+        return undefined;
+      }
+      return respond(request.action === "aiFillField" ? completeField(request) : chooseOption(request), sendResponse);
     case "showNotification":
       showNotification(request.message);
       return undefined;

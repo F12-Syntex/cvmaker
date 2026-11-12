@@ -12,17 +12,30 @@ test('the context menu is registered on install', () => {
   chrome.runtime.onInstalled.fire({ reason: 'install' });
   assert.equal(chrome.calls.contextMenus.length, 1);
   assert.equal(chrome.calls.contextMenus[0].id, 'ai-fill-element');
+  assert.deepEqual([...chrome.calls.contextMenus[0].contexts], ['editable']);
 });
 
-test('context menu click sends no page coordinates', async () => {
+test('context menu click injects into the clicked frame and sends no coordinates or secrets', async () => {
   const { chrome } = loadBackground({ local: CONFIGURED });
-  chrome.contextMenus.onClicked.fire({ menuItemId: 'ai-fill-element', frameId: 0, pageX: 10, pageY: 20 }, { id: 7 });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ai-fill-element', frameId: 3, pageX: 10, pageY: 20 }, { id: 7 });
   await flush();
+  assert.equal(chrome.calls.executeScript.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(chrome.calls.executeScript[0])), {
+    target: { tabId: 7, frameIds: [3] }, files: ['lib/fields.js', 'content.js']
+  });
   const fill = chrome.calls.tabMessages.find(m => m.message.action === 'fillElementWithAI');
   assert.ok(fill, 'fill message sent');
   assert.equal(fill.tabId, 7);
-  assert.equal('clickX' in fill.message, false);
-  assert.equal('clickY' in fill.message, false);
+  assert.deepEqual({ ...fill.options }, { frameId: 3 });
+  assert.deepEqual({ ...fill.message }, { action: 'fillElementWithAI' });
+});
+
+test('context menu click on a page that cannot be scripted shows a notification', async () => {
+  const { chrome } = loadBackground({ local: CONFIGURED, executeScriptError: 'Cannot access a chrome:// URL' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ai-fill-element', frameId: 0 }, { id: 7 });
+  await flush();
+  assert.equal(chrome.calls.tabMessages.length, 0);
+  assert.match(chrome.calls.notifications[0].message, /Could not fill fields/);
 });
 
 test('context menu click without configuration shows a notification and handles openPopup failure', async () => {

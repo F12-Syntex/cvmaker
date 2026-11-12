@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const applyStatus = document.getElementById('applyStatus');
   
   const apiKeyInput = document.getElementById('apiKey');
+  const modelInput = document.getElementById('model');
   const userDataInput = document.getElementById('userData');
   const jobTitleInput = document.getElementById('jobTitle');
   const locationInput = document.getElementById('location');
@@ -49,10 +50,11 @@ document.addEventListener('DOMContentLoaded', function() {
   let searchInProgress = false;
 
   // Load saved configuration
-  chrome.storage.local.get(['openaiApiKey', 'userData', 'jobSearchSettings'], function(result) {
+  chrome.storage.local.get(['openaiApiKey', 'openaiModel', 'userData', 'jobSearchSettings'], function(result) {
     if (result.openaiApiKey) {
       apiKeyInput.value = result.openaiApiKey;
     }
+    modelInput.value = result.openaiModel || AutoApplyLib.DEFAULT_MODEL;
     if (result.userData) {
       userDataInput.value = result.userData;
     }
@@ -160,6 +162,13 @@ document.addEventListener('DOMContentLoaded', function() {
       configStatus.className = 'status error';
       return;
     }
+
+    const model = modelInput.value.trim() || AutoApplyLib.DEFAULT_MODEL;
+    if (AutoApplyLib.normalizeModel(model) !== model) {
+      configStatus.textContent = '❌ Please enter a valid model name, for example gpt-4.1-mini';
+      configStatus.className = 'status error';
+      return;
+    }
     
     setLoading(saveBtn, true, '💾 Saving configuration...', configStatus);
     
@@ -172,6 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     chrome.storage.local.set({
       openaiApiKey: apiKey,
+      openaiModel: model,
       userData: userData,
       jobSearchSettings: jobSearchSettings
     }, function() {
@@ -290,116 +300,93 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // Fill current form
-  fillBtn.addEventListener('click', function() {
-    const apiKey = apiKeyInput.value.trim();
-    const userData = userDataInput.value.trim();
-    
-    setLoading(fillBtn, true, '🤖 AI is analyzing and filling the form...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
-        setLoading(fillBtn, false);
-        applyStatus.textContent = '❌ Unable to access current tab';
-        applyStatus.className = 'status error';
-        return;
-      }
-      
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "fillFormWithAI",
-        apiKey: apiKey,
-        userData: userData
-      }, function(response) {
-        setLoading(fillBtn, false);
-        
-        if (chrome.runtime.lastError) {
-          applyStatus.textContent = '❌ Cannot access this page. Try refreshing and reopening the extension.';
-          applyStatus.className = 'status error';
-          return;
-        }
-        
-        if (response && response.success) {
-          if (response.fieldsCount > 0) {
-            applyStatus.textContent = `🎉 Success! AI filled ${response.fieldsCount} fields intelligently`;
-            applyStatus.className = 'status success';
-          } else {
-            applyStatus.textContent = '📄 No fillable form fields found on this page';
-            applyStatus.className = 'status info';
-          }
-        } else {
-          const errorMsg = response?.error || 'Unknown error occurred';
-          applyStatus.textContent = `❌ Error: ${errorMsg}`;
-          applyStatus.className = 'status error';
-        }
-      });
-    });
-  });
-
-  function showTabError(button, message) {
-    setLoading(button, false);
+  function showApplyStatus(message, kind) {
     applyStatus.textContent = message;
-    applyStatus.className = 'status error';
+    applyStatus.className = `status ${kind}`;
   }
 
-  // Clear form
-  clearBtn.addEventListener('click', function() {
-    setLoading(clearBtn, true, '🗑️ Clearing all form fields...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
-        showTabError(clearBtn, '❌ Unable to access current tab');
-        return;
-      }
-      chrome.tabs.sendMessage(tabs[0].id, {action: "clearForm"}, function(response) {
-        setLoading(clearBtn, false);
-        
-        if (chrome.runtime.lastError) {
-          showTabError(clearBtn, '❌ Cannot access this page. Try refreshing and reopening the extension.');
-          return;
-        }
-        
-        if (response && response.success) {
-          if (response.fieldsCount > 0) {
-            applyStatus.textContent = `✅ Cleared ${response.fieldsCount} fields`;
-            applyStatus.className = 'status success';
-          } else {
-            applyStatus.textContent = '📄 No form fields found to clear';
-            applyStatus.className = 'status info';
-          }
-        } else {
-          applyStatus.textContent = '❌ Failed to clear form';
-          applyStatus.className = 'status error';
-        }
+  // Injects the content script into the active tab (allowed by activeTab, which opening the
+  // popup grants) and sends it one message. The message never carries the API key or the
+  // profile: the content script asks the background for each AI answer.
+  async function sendToActiveTab(message) {
+    let tabs;
+    try {
+      tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch (error) {
+      tabs = null;
+    }
+    if (!tabs || !tabs[0]) throw new Error('❌ Unable to access current tab');
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabs[0].id },
+        files: AutoApplyLib.CONTENT_SCRIPT_FILES
       });
-    });
+      return await chrome.tabs.sendMessage(tabs[0].id, message);
+    } catch (error) {
+      // chrome:// pages, the Web Store and PDF viewers cannot be scripted.
+      throw new Error('❌ Cannot access this page. Try refreshing and reopening the extension.');
+    }
+  }
+
+  // Fill current form
+  fillBtn.addEventListener('click', async function() {
+    setLoading(fillBtn, true, '🤖 AI is analyzing and filling the form...', applyStatus);
+    try {
+      const response = await sendToActiveTab({ action: "fillFormWithAI" });
+      if (response && response.success) {
+        if (response.fieldsCount > 0) {
+          showApplyStatus(`🎉 Success! AI filled ${response.fieldsCount} fields intelligently`, 'success');
+        } else if (response.errors && response.errors.length > 0) {
+          showApplyStatus(`❌ ${response.errors[0]}`, 'error');
+        } else {
+          showApplyStatus('📄 No fillable form fields found on this page', 'info');
+        }
+      } else {
+        showApplyStatus(`❌ Error: ${(response && response.error) || 'Unknown error occurred'}`, 'error');
+      }
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(fillBtn, false);
+    }
+  });
+
+  // Clear form
+  clearBtn.addEventListener('click', async function() {
+    setLoading(clearBtn, true, '🗑️ Clearing all form fields...', applyStatus);
+    try {
+      const response = await sendToActiveTab({ action: "clearForm" });
+      if (response && response.success) {
+        if (response.fieldsCount > 0) {
+          showApplyStatus(`✅ Cleared ${response.fieldsCount} fields`, 'success');
+        } else {
+          showApplyStatus('📄 No form fields found to clear', 'info');
+        }
+      } else {
+        showApplyStatus('❌ Failed to clear form', 'error');
+      }
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(clearBtn, false);
+    }
   });
 
   // Analyze form
-  analyzeBtn.addEventListener('click', function() {
+  analyzeBtn.addEventListener('click', async function() {
     setLoading(analyzeBtn, true, '📊 Analyzing current page structure...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
-        showTabError(analyzeBtn, '❌ Unable to access current tab');
-        return;
+    try {
+      const response = await sendToActiveTab({ action: "analyzePage" });
+      if (response && response.success) {
+        showApplyStatus(`📊 Found ${response.inputFields} input fields, ${response.forms} forms, ${response.buttons} buttons`, 'info');
+      } else {
+        showApplyStatus('❌ Could not analyze page', 'error');
       }
-      chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePage"}, function(response) {
-        setLoading(analyzeBtn, false);
-        
-        if (chrome.runtime.lastError) {
-          showTabError(analyzeBtn, '❌ Cannot access this page. Try refreshing and reopening the extension.');
-          return;
-        }
-        
-        if (response && response.success) {
-          applyStatus.textContent = `📊 Found ${response.inputFields} input fields, ${response.forms} forms, ${response.buttons} buttons`;
-          applyStatus.className = 'status info';
-        } else {
-          applyStatus.textContent = '❌ Could not analyze page';
-          applyStatus.className = 'status error';
-        }
-      });
-    });
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(analyzeBtn, false);
+    }
   });
 
   // Listen for messages from background script and content script
@@ -449,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   document.getElementById('fillElementBtn').addEventListener('click', () => {
-    applyStatus.textContent = '👆 Right-click on any form element and select "AI Fill Fields" from the context menu';
+    applyStatus.textContent = '👆 Right-click a form field and select "AI Fill This Field" from the context menu';
     applyStatus.className = 'status info';
   });
 });

@@ -108,9 +108,24 @@ function createChrome(options) {
       onStartup: createEvent(),
       getURL: (p) => `chrome-extension://test-extension-id/${p}`,
       // Default: nobody else is listening, which is what Chrome reports when the popup is closed.
-      sendMessage(message) {
+      // With a callback (popup style), a failure is reported through runtime.lastError.
+      sendMessage(message, callback) {
         const record = { message, handled: null };
         calls.runtimeMessages.push(record);
+        if (typeof callback === 'function') {
+          record.handled = true;
+          const answer = opts.runtimeSendMessage
+            ? Promise.resolve(opts.runtimeSendMessage(message, record))
+            : Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'));
+          answer.then(
+            value => callback(value),
+            error => {
+              chrome.runtime.lastError = { message: error.message };
+              try { callback(undefined); } finally { chrome.runtime.lastError = undefined; }
+            }
+          );
+          return undefined;
+        }
         if (opts.runtimeSendMessage) return opts.runtimeSendMessage(message, record);
         return trackedRejection(new Error('Could not establish connection. Receiving end does not exist.'), record);
       }
@@ -142,7 +157,12 @@ function createChrome(options) {
     },
     contextMenus: {
       onClicked: createEvent(),
-      create(properties) { calls.contextMenus.push(properties); }
+      create(properties) { calls.contextMenus.push(properties); },
+      removeAll(callback) {
+        calls.contextMenus.length = 0;
+        if (callback) { callback(); return undefined; }
+        return Promise.resolve();
+      }
     },
     notifications: {
       create(idOrOptions, maybeOptions) {
@@ -160,6 +180,7 @@ function createChrome(options) {
     scripting: {
       executeScript(injection) {
         calls.executeScript.push(injection);
+        if (opts.executeScriptError) return Promise.reject(new Error(opts.executeScriptError));
         return Promise.resolve([]);
       }
     },
@@ -357,6 +378,67 @@ function loadContent(options) {
   };
 }
 
+// --- Popup: every element is created on first lookup by id ---
+
+function createPopupElement(tagName) {
+  const listeners = {};
+  const classes = new Set();
+  const children = {};
+  const element = {
+    tagName: String(tagName || 'DIV').toUpperCase(),
+    value: '',
+    textContent: '',
+    disabled: false,
+    dataset: {},
+    style: {},
+    scrollTop: 0,
+    scrollHeight: 0,
+    appended: [],
+    get className() { return [...classes].join(' '); },
+    set className(value) {
+      classes.clear();
+      String(value).split(/\s+/).filter(Boolean).forEach(c => classes.add(c));
+    },
+    classList: {
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c)
+    },
+    addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+    // Resolves once every listener (sync or async) has finished.
+    click() { return Promise.all((listeners.click || []).map(fn => fn({ type: 'click' }))); },
+    querySelector(selector) {
+      children[selector] = children[selector] || createPopupElement('SPAN');
+      return children[selector];
+    },
+    appendChild(child) { element.appended.push(child); return child; }
+  };
+  return element;
+}
+
+function loadPopup(options) {
+  const opts = options || {};
+  const chrome = createChrome(opts);
+  const elements = {};
+  const documentListeners = {};
+  const document = {
+    elements,
+    getElementById(id) {
+      elements[id] = elements[id] || createPopupElement('DIV');
+      return elements[id];
+    },
+    querySelectorAll() { return []; },
+    createElement: (tag) => createPopupElement(tag),
+    createTextNode: (text) => ({ textContent: text }),
+    addEventListener(type, fn) { (documentListeners[type] = documentListeners[type] || []).push(fn); }
+  };
+  const context = createContext({ chrome, document });
+  vm.runInContext(readPluginFile('lib/fields.js'), context, { filename: 'lib/fields.js' });
+  vm.runInContext(readPluginFile('popup.js'), context, { filename: 'popup.js' });
+  (documentListeners.DOMContentLoaded || []).forEach(fn => fn());
+  return { chrome, document, el: (id) => document.getElementById(id) };
+}
+
 module.exports = {
   PLUGIN_DIR,
   readPluginFile,
@@ -365,6 +447,7 @@ module.exports = {
   createDocument,
   loadBackground,
   loadContent,
+  loadPopup,
   dispatchRuntimeMessage,
   flush
 };
