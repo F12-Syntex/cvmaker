@@ -2,11 +2,22 @@ package com.cvmaker;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import com.cvmaker.JobDataFetcher.JobData;
 import com.cvmaker.configuration.ConfigManager;
@@ -14,10 +25,28 @@ import com.cvmaker.service.ai.AiService;
 
 public class CVGenerator {
 
+    /** How long one LaTeX run may take before it is killed. */
+    public static final Duration DEFAULT_LATEX_TIMEOUT = Duration.ofSeconds(120);
+
+    /** How many trailing lines of compiler output are kept and printed on failure. */
+    static final int LOG_TAIL_LINES = 40;
+
     private final TemplateLoader templateLoader;
     private final AiService aiService;
     private final JobDataFetcher jobDataFetcher;
     private final ConfigManager config;
+
+    /** The kinds of document this generator produces. */
+    private enum DocumentKind {
+        CV("CV"),
+        COVER_LETTER("cover letter");
+
+        private final String label;
+
+        DocumentKind(String label) {
+            this.label = label;
+        }
+    }
 
     public CVGenerator(ConfigManager config) {
         this.config = config;
@@ -49,7 +78,7 @@ public class CVGenerator {
 
         // Fetch job data
         JobData jobData = jobDataFetcher.fetchJobData(config.getJobUrl());
-        System.out.println("Fetched job data: " + jobData);
+        System.out.println("Fetched job data: " + jobData.getJobTitle() + " at " + jobData.getCompanyName());
 
         // Update config with job description
         config.setJobDescriptionContent(jobData.getJobDescription());
@@ -58,13 +87,7 @@ public class CVGenerator {
         String outputDir = createOutputDirectory(jobData.getJobName());
         System.out.println("Output directory: " + Paths.get(outputDir).toAbsolutePath());
 
-        // Generate CV
-        generateCV(outputDir, config.getOutputPdfName());
-
-        // Generate cover letter if enabled
-        if (config.isGenerateCoverLetter()) {
-            generateCoverLetter(outputDir, config.getCoverLetterPdfName());
-        }
+        generateDocuments(outputDir);
 
         System.out.println("Generation completed for: " + jobData.getJobTitle() + " at " + jobData.getCompanyName());
     }
@@ -76,90 +99,77 @@ public class CVGenerator {
         System.out.println("Generating from configuration files...");
 
         String outputDir = createOutputDirectory();
+        generateDocuments(outputDir);
+    }
 
-        // Generate CV
-        generateCV(outputDir, config.getOutputPdfName());
+    /**
+     * Generate the CV and, if enabled, the cover letter into the given directory.
+     */
+    private void generateDocuments(String outputDir) throws Exception {
+        generateDocument(DocumentKind.CV, outputDir);
 
-        // Generate cover letter if enabled
         if (config.isGenerateCoverLetter()) {
-            generateCoverLetter(outputDir, config.getCoverLetterPdfName());
+            generateDocument(DocumentKind.COVER_LETTER, outputDir);
         }
     }
 
     /**
-     * Generate CV
+     * Generate one document: ask the AI for LaTeX, save it, compile it and clean up.
      */
-    private void generateCV(String outputDir, String pdfName) throws Exception {
-        System.out.println("Generating CV...");
+    private void generateDocument(DocumentKind kind, String outputDir) throws Exception {
+        boolean coverLetter = kind == DocumentKind.COVER_LETTER;
+        String defaultPdfName = coverLetter ? "cover_letter.pdf" : "cv.pdf";
+        String defaultTexName = coverLetter ? "cover_letter.tex" : "cv.tex";
+        String pdfName = sanitizeFileName(
+                coverLetter ? config.getCoverLetterPdfName() : config.getOutputPdfName(), defaultPdfName);
+        String texName = sanitizeFileName(
+                coverLetter ? config.getCoverLetterTexFilename() : config.getCvTexFilename(), defaultTexName);
 
-        // Load template if specified
-        String referenceTemplate = loadTemplate(config.getTemplateName(), false);
+        System.out.println("Generating " + kind.label + "...");
 
-        // Generate LaTeX with AI
-        System.out.println("Generating CV LaTeX with AI...");
-        String generatedLatex = aiService.generateDirectLatexCV(
-                config.getUserDataContent(),
-                referenceTemplate,
-                config.getJobDescriptionContent(),
-                config.getCvPromptContent()
-        );
+        String referenceTemplate = loadTemplate(config.getTemplateName(), coverLetter);
+
+        System.out.println("Generating " + kind.label + " LaTeX with AI...");
+        String generatedLatex = coverLetter
+                ? aiService.generateDirectLatexCoverLetter(
+                        config.getUserDataContent(),
+                        referenceTemplate,
+                        config.getJobDescriptionContent(),
+                        config.getCoverLetterPromptContent())
+                : aiService.generateDirectLatexCV(
+                        config.getUserDataContent(),
+                        referenceTemplate,
+                        config.getJobDescriptionContent(),
+                        config.getCvPromptContent());
 
         // Save and compile
         Path outputDirPath = Paths.get(outputDir);
-        Path texOutputPath = outputDirPath.resolve(config.getCvTexFilename());
+        Path texOutputPath = outputDirPath.resolve(texName);
         Files.writeString(texOutputPath, generatedLatex);
 
         if (config.isSaveGeneratedLatex()) {
             System.out.println("LaTeX saved: " + texOutputPath.toAbsolutePath());
         }
 
-        System.out.println("Compiling CV to PDF...");
-        compileLatexWithProgress(outputDirPath, texOutputPath, pdfName);
+        System.out.println("Compiling " + kind.label + " to PDF...");
+        // On failure this throws and leaves the .tex and .log in place for debugging
+        newLatexCompiler().compile(outputDirPath, texOutputPath, pdfName);
 
         // Clean up intermediate files if not in debug mode
         if (!config.isSaveGeneratedLatex()) {
-            cleanupIntermediateFiles(outputDirPath, getBaseName(texOutputPath));
+            cleanupIntermediateFiles(outputDirPath, getBaseName(texOutputPath), config.getCleanupExtensions());
         }
 
-        System.out.println("CV generated: " + outputDirPath.resolve(pdfName).toAbsolutePath());
+        System.out.println(capitalize(kind.label) + " generated: " + outputDirPath.resolve(pdfName).toAbsolutePath());
     }
 
-    /**
-     * Generate cover letter
-     */
-    private void generateCoverLetter(String outputDir, String pdfName) throws Exception {
-        System.out.println("Generating cover letter...");
-
-        // Load template if specified
-        String referenceTemplate = loadTemplate(config.getTemplateName(), true);
-
-        // Generate LaTeX with AI
-        System.out.println("Generating cover letter LaTeX with AI...");
-        String generatedLatex = aiService.generateDirectLatexCoverLetter(
-                config.getUserDataContent(),
-                referenceTemplate,
-                config.getJobDescriptionContent(),
-                config.getCoverLetterPromptContent()
-        );
-
-        // Save and compile
-        Path outputDirPath = Paths.get(outputDir);
-        Path texOutputPath = outputDirPath.resolve(config.getCoverLetterTexFilename());
-        Files.writeString(texOutputPath, generatedLatex);
-
-        if (config.isSaveGeneratedLatex()) {
-            System.out.println("LaTeX saved: " + texOutputPath.toAbsolutePath());
-        }
-
-        System.out.println("Compiling cover letter to PDF...");
-        compileLatexWithProgress(outputDirPath, texOutputPath, pdfName);
-
-        // Clean up intermediate files if not in debug mode
-        if (!config.isSaveGeneratedLatex()) {
-            cleanupIntermediateFiles(outputDirPath, getBaseName(texOutputPath));
-        }
-
-        System.out.println("Cover letter generated: " + outputDirPath.resolve(pdfName).toAbsolutePath());
+    private LatexCompiler newLatexCompiler() {
+        return new LatexCompiler(
+                config.getLatexCompiler(),
+                config.getLatexCompilerArgs(),
+                DEFAULT_LATEX_TIMEOUT,
+                config.getProgressReportInterval(),
+                new ProcessCommandRunner());
     }
 
     /**
@@ -193,7 +203,7 @@ public class CVGenerator {
     private String createOutputDirectory(String jobName) throws IOException {
         String outputDir;
         if (jobName != null && !jobName.trim().isEmpty()) {
-            outputDir = Paths.get(config.getOutputDirectory(), jobName).toString();
+            outputDir = Paths.get(config.getOutputDirectory(), sanitizeFileName(jobName, "job")).toString();
         } else {
             outputDir = config.getOutputDirectory();
         }
@@ -206,85 +216,74 @@ public class CVGenerator {
     /**
      * Get base name from file path
      */
-    private String getBaseName(Path filePath) {
+    static String getBaseName(Path filePath) {
         String fileName = filePath.getFileName().toString();
         int lastDot = fileName.lastIndexOf('.');
         return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
     }
 
     /**
-     * Clean up intermediate LaTeX files
+     * Delete intermediate LaTeX files named {@code baseName + ext} for each extension. Extensions
+     * are trimmed (the config splits on commas without trimming). Failures are reported, not thrown.
+     *
+     * @return the number of files that could not be deleted
      */
-    private void cleanupIntermediateFiles(Path outputDir, String baseName) {
-        for (String ext : config.getCleanupExtensions()) {
+    static int cleanupIntermediateFiles(Path outputDir, String baseName, List<String> extensions) {
+        int failures = 0;
+        if (extensions == null) {
+            return 0;
+        }
+        for (String rawExt : extensions) {
+            if (rawExt == null || rawExt.trim().isEmpty()) {
+                continue;
+            }
+            Path file = outputDir.resolve(baseName + rawExt.trim());
             try {
-                Path file = outputDir.resolve(baseName + ext);
-                if (Files.exists(file)) {
-                    Files.delete(file);
-                }
+                Files.deleteIfExists(file);
             } catch (IOException e) {
-                // Ignore cleanup errors
+                failures++;
+                System.err.println("Warning: could not delete intermediate file " + file + ": " + e);
             }
         }
+        return failures;
     }
 
     /**
-     * Compile LaTeX to PDF with progress tracking
+     * Reduce a configured or scraped name to a single safe path segment: any directory part is
+     * dropped, characters that are illegal on common file systems become '_', and leading dots are
+     * removed so the result cannot be "." or "..". Returns {@code fallback} if nothing usable is left.
      */
-    private void compileLatexWithProgress(Path dir, Path texFile, String outputPdfName) throws IOException, InterruptedException {
-        String texFileName = texFile.getFileName().toString();
-        // Build command array: compiler + args + tex file
-        java.util.List<String> command = new java.util.ArrayList<>();
-        command.add(config.getLatexCompiler());
-        command.addAll(config.getLatexCompilerArgs());
-        command.add(texFileName);
-        ProcessBuilder pb = new ProcessBuilder(command);
-
-        pb.redirectErrorStream(true);
-        pb.directory(dir.toFile());
-
-        Process proc = pb.start();
-
-        // Read the output to monitor progress
-        BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-        String line;
-        StringBuilder output = new StringBuilder();
-        int pageCount = 0;
-
-        while ((line = reader.readLine()) != null) {
-            output.append(line).append("\n");
-
-            // Track page processing
-            if (line.contains("[") && line.matches(".*\\[\\d+.*")) {
-                pageCount++;
-                if (pageCount % config.getProgressReportInterval() == 0) {
-                    System.out.printf("   📄 Processing page %d...\n", pageCount);
-                }
-            }
+    static String sanitizeFileName(String name, String fallback) {
+        if (name == null) {
+            return fallback;
         }
-
-        int exitCode = proc.waitFor();
-
-        // Check if PDF was generated
-        String pdfFileName = texFileName.replace(".tex", ".pdf");
-        Path pdfPath = dir.resolve(pdfFileName);
-        boolean pdfExists = Files.exists(pdfPath);
-
-        if (exitCode != 0 && !pdfExists) {
-            if (config.isSaveAiResponses()) {
-                System.out.println("LaTeX compilation output:");
-                System.out.println(output.toString());
-            }
-            throw new RuntimeException("LaTeX compilation failed");
+        String trimmed = name.trim();
+        // Keep only the last path segment, for either separator
+        int lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        if (lastSep >= 0) {
+            trimmed = trimmed.substring(lastSep + 1);
         }
+        String cleaned = trimmed
+                .replaceAll("[\\p{Cntrl}<>:\"|?*]", "_")
+                .replaceAll("^\\.+", "")
+                .trim();
+        return cleaned.isEmpty() ? fallback : cleaned;
+    }
 
-        if (pdfExists) {
-            if (!pdfFileName.equals(outputPdfName)) {
-                Files.move(pdfPath, dir.resolve(outputPdfName), StandardCopyOption.REPLACE_EXISTING);
-            }
-        } else {
-            throw new RuntimeException("PDF file was not generated");
+    /**
+     * The PDF name the LaTeX compiler writes for a .tex file: only a trailing ".tex" suffix is
+     * replaced, so "my.tex.notes.tex" gives "my.tex.notes.pdf" and "cv" gives "cv.pdf".
+     */
+    static String pdfFileNameFor(String texFileName) {
+        String base = texFileName;
+        if (base.toLowerCase(Locale.ROOT).endsWith(".tex")) {
+            base = base.substring(0, base.length() - ".tex".length());
         }
+        return base + ".pdf";
+    }
+
+    private static String capitalize(String s) {
+        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     // Getters
@@ -307,6 +306,221 @@ public class CVGenerator {
     public void shutdown() {
         if (aiService != null) {
             aiService.shutdown();
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Process seam: running the LaTeX compiler
+    // ------------------------------------------------------------------------------------------
+
+    /** Outcome of running an external command. */
+    record CommandResult(int exitCode, boolean timedOut, List<String> outputTail) {
+    }
+
+    /** Runs an external command; the seam that lets tests replace the real process. */
+    @FunctionalInterface
+    interface CommandRunner {
+        /**
+         * Run {@code command} in {@code workDir}, passing each output line (stdout and stderr merged)
+         * to {@code lineListener}, and give up after {@code timeout}.
+         */
+        CommandResult run(List<String> command, Path workDir, Duration timeout, Consumer<String> lineListener)
+                throws IOException, InterruptedException;
+    }
+
+    /**
+     * Real {@link CommandRunner}: starts the process, drains its merged output on a separate thread
+     * (so a chatty process can never block on a full pipe), waits with a timeout and kills the
+     * process tree if it overruns. Only the last {@code tailLines} lines are kept in memory.
+     */
+    static final class ProcessCommandRunner implements CommandRunner {
+        private static final long DRAIN_JOIN_MILLIS = 5_000;
+        private final int tailLines;
+
+        ProcessCommandRunner() {
+            this(LOG_TAIL_LINES);
+        }
+
+        ProcessCommandRunner(int tailLines) {
+            this.tailLines = Math.max(1, tailLines);
+        }
+
+        @Override
+        public CommandResult run(List<String> command, Path workDir, Duration timeout, Consumer<String> lineListener)
+                throws IOException, InterruptedException {
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            if (workDir != null) {
+                pb.directory(workDir.toFile());
+            }
+
+            Process proc = pb.start();
+            proc.getOutputStream().close(); // the compiler must never wait for input
+
+            Deque<String> tail = new ArrayDeque<>();
+            Thread drainer = new Thread(() -> drain(proc.getInputStream(), tail, lineListener),
+                    "latex-output-drainer");
+            drainer.setDaemon(true);
+            drainer.start();
+
+            boolean finished;
+            try {
+                finished = proc.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                destroyTree(proc);
+                throw e;
+            }
+            if (!finished) {
+                destroyTree(proc);
+                proc.waitFor(DRAIN_JOIN_MILLIS, TimeUnit.MILLISECONDS);
+            }
+
+            drainer.join(DRAIN_JOIN_MILLIS);
+            if (drainer.isAlive()) {
+                // A grandchild may still hold the pipe; closing it ends the read
+                proc.getInputStream().close();
+                drainer.join(DRAIN_JOIN_MILLIS);
+            }
+
+            List<String> tailCopy;
+            synchronized (tail) {
+                tailCopy = new ArrayList<>(tail);
+            }
+            int exitCode = finished ? proc.exitValue() : -1;
+            return new CommandResult(exitCode, !finished, Collections.unmodifiableList(tailCopy));
+        }
+
+        private void drain(InputStream in, Deque<String> tail, Consumer<String> lineListener) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    synchronized (tail) {
+                        tail.addLast(line);
+                        if (tail.size() > tailLines) {
+                            tail.removeFirst();
+                        }
+                    }
+                    if (lineListener != null) {
+                        lineListener.accept(line);
+                    }
+                }
+            } catch (IOException e) {
+                // Stream closed because the process was killed; nothing more to read
+            }
+        }
+
+        private static void destroyTree(Process proc) {
+            proc.descendants().forEach(ProcessHandle::destroyForcibly);
+            proc.destroyForcibly();
+        }
+    }
+
+    /** Thrown when the LaTeX compiler fails, times out or produces no PDF. */
+    public static class LatexCompilationException extends RuntimeException {
+        private final List<String> logTail;
+
+        public LatexCompilationException(String message, List<String> logTail) {
+            super(message);
+            this.logTail = logTail == null ? List.of() : List.copyOf(logTail);
+        }
+
+        /** The last lines of compiler output. */
+        public List<String> getLogTail() {
+            return logTail;
+        }
+    }
+
+    /**
+     * Compiles a .tex file to PDF with the configured compiler, then renames the PDF to the requested
+     * output name. On failure the last lines of the compiler log are always printed.
+     */
+    static final class LatexCompiler {
+        private final String compiler;
+        private final List<String> compilerArgs;
+        private final Duration timeout;
+        private final int progressReportInterval;
+        private final CommandRunner runner;
+
+        LatexCompiler(String compiler, List<String> compilerArgs, Duration timeout, int progressReportInterval,
+                CommandRunner runner) {
+            this.compiler = compiler;
+            this.compilerArgs = compilerArgs == null ? List.of() : compilerArgs;
+            this.timeout = timeout;
+            this.progressReportInterval = progressReportInterval;
+            this.runner = runner;
+        }
+
+        /** The full command line: compiler, non-blank args, then the .tex file name. */
+        List<String> buildCommand(String texFileName) {
+            List<String> command = new ArrayList<>();
+            command.add(compiler);
+            for (String arg : compilerArgs) {
+                if (arg != null && !arg.trim().isEmpty()) {
+                    command.add(arg.trim());
+                }
+            }
+            command.add(texFileName);
+            return command;
+        }
+
+        /**
+         * @return the path of the final PDF ({@code dir/outputPdfName})
+         */
+        Path compile(Path dir, Path texFile, String outputPdfName) throws IOException, InterruptedException {
+            String texFileName = texFile.getFileName().toString();
+            String pdfFileName = pdfFileNameFor(texFileName);
+            Path pdfPath = dir.resolve(pdfFileName);
+
+            // A PDF left over from an earlier run must not be mistaken for this run's output
+            Files.deleteIfExists(pdfPath);
+
+            int[] pageCount = {0};
+            Consumer<String> progress = line -> {
+                if (progressReportInterval > 0 && line.matches(".*\\[\\d+.*")) {
+                    pageCount[0]++;
+                    if (pageCount[0] % progressReportInterval == 0) {
+                        System.out.printf("   Processing page %d...%n", pageCount[0]);
+                    }
+                }
+            };
+
+            CommandResult result = runner.run(buildCommand(texFileName), dir, timeout, progress);
+
+            if (result.timedOut()) {
+                printLogTail(result);
+                throw new LatexCompilationException(
+                        "LaTeX compilation timed out after " + timeout.toSeconds() + "s and was stopped",
+                        result.outputTail());
+            }
+
+            boolean pdfExists = Files.exists(pdfPath);
+            if (!pdfExists) {
+                printLogTail(result);
+                String reason = result.exitCode() != 0
+                        ? "LaTeX compilation failed (exit code " + result.exitCode() + ")"
+                        : "PDF file was not generated";
+                throw new LatexCompilationException(reason, result.outputTail());
+            }
+
+            if (result.exitCode() != 0) {
+                // pdflatex in nonstopmode exits non-zero on recoverable errors but still writes a PDF
+                System.out.println("Warning: LaTeX exited with code " + result.exitCode()
+                        + " but produced a PDF; check the output below.");
+                printLogTail(result);
+            }
+
+            Path target = dir.resolve(outputPdfName);
+            if (!pdfFileName.equals(outputPdfName)) {
+                Files.move(pdfPath, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return target;
+        }
+
+        private static void printLogTail(CommandResult result) {
+            System.out.println("LaTeX compilation output (last " + result.outputTail().size() + " lines):");
+            for (String line : result.outputTail()) {
+                System.out.println("   " + line);
+            }
         }
     }
 }
