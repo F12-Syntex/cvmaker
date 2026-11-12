@@ -36,3 +36,50 @@ OAuth client; it should switch to `require(...)` (or item 21's `GoogleAuthProvid
 
 **Verified by.** `ApplicationConfigTest`: lookup order, blank handling, `require` message, data-dir
 default.
+
+## Item 7: local application database corrupts records; CSV export unsafe
+
+**What was wrong.** `serialize()` escaped `||` only in `extractedInfo`; a newline in any field broke
+the line-based loader; `split("\\|\\|")` without `-1` dropped trailing empty fields (a record whose
+later fields were all empty fell below 14 fields and was discarded); the CSV export did not
+neutralise formula cells, used a locale-dependent `%.2f`, and `FileWriter`/`Scanner` used the
+platform charset. Writes appended in place, so a crash could leave a partial record.
+
+**What changed.**
+- Storage format is now one JSON object per line, UTF-8 (`JobApplicationData.toJsonLine()` /
+  `fromJsonLine()`, using org.json, which is already a direct dependency; Jackson would have needed
+  a pom change). Null fields are omitted; control characters are escaped so a record is always one
+  line. NaN confidence is stored as 0.
+- Old `||` files still load (`DataStorage.parseRecords`): `deserialize` now splits with `-1`, and a
+  legacy record that a newline split over several lines is joined back (a line with fewer than 14
+  fields cannot start a record, so it is a continuation). Lines that still cannot be decoded are
+  counted and reported on stderr. Mixed JSON/legacy files load.
+- Every rewrite (database, system state, CSV export) goes through `DataStorage.writeAtomically`:
+  temp file in the same directory, `fsync`, then `ATOMIC_MOVE` over the target (plain replace if
+  the file system has no atomic move); the temp file is removed on failure. The temp file is
+  created by `Files.createTempFile`, so on POSIX the rewritten file is owner-only (0600).
+- `saveJobApplicationData` now reads the file, replaces the record with the same email ID and
+  rewrites the file atomically (previously it appended duplicates; loading kept the last, so the
+  visible result is the same). New `saveJobApplicationsDb(Map)` writes a whole map.
+- First rewrite of a file that holds legacy or unreadable lines first copies it to
+  `job_applications.txt.bak-<yyyyMMdd-HHmmss>`, so the conversion to JSON never loses old data.
+- `saveProcessedEmailId` still appends (rewriting the whole ID list per email would be quadratic);
+  an interrupted append only leaves a partial last line that matches no real ID, and the next
+  append starts on a fresh line. Null/blank IDs are ignored. Reads are UTF-8 with replacement of
+  invalid bytes, so an old platform-charset file still loads.
+- CSV export: UTF-8, every cell quoted, quotes doubled, cells starting with `= + - @ TAB CR` are
+  prefixed with `'`, confidence formatted with `Locale.ROOT`.
+- New constructor `DataStorage(Path dataDirectory)`; the no-arg constructor uses
+  `ApplicationConfig.getDataDirectory()`. Directories are created as needed.
+- `serialize()` is kept but `@Deprecated` (only tests use it, to build legacy fixtures).
+
+**Verified by.** `DataStorageTest` (with `@TempDir`): JSON round trip of every field including
+newlines, `||`, trailing `|`, quotes, non-ASCII; file round trip; replace-by-ID; old-serializer file
+loads; 14-field oldest format; trailing-empty-field record (failed before the fix); newline-broken
+legacy records rejoined (failed before); legacy-to-JSON conversion with backup; truncated last JSON
+line skipped; failed atomic write leaves the original and no temp file; processed-ID append after a
+partial line; CSV formula neutralising, quoting, UTF-8, `Locale.GERMANY` default.
+
+**Left.** A record split by a newline in fields 13 to 15 (timestamps, URL, email link) cannot be
+told apart from two records; such newlines should not occur. JSON keys are the Java field names;
+renaming a field needs a reader alias.

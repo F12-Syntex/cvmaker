@@ -3,6 +3,9 @@ package com.cvmaker.application.management;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 public class JobApplicationData {
 
     private String emailId;
@@ -151,6 +154,109 @@ public class JobApplicationData {
     public String getEmailTimestamp() { return emailTimestamp; }
     public void setEmailTimestamp(String emailTimestamp) { this.emailTimestamp = emailTimestamp; }
 
+    /**
+     * Encodes this record as a single-line JSON object (the storage format of {@link DataStorage}).
+     * Null fields are omitted. Newlines and other control characters inside values are escaped,
+     * so the result never contains a line break.
+     */
+    public String toJsonLine() {
+        JSONObject json = new JSONObject();
+        json.put("emailId", emailId);
+        json.put("subject", subject);
+        json.put("fromEmail", fromEmail);
+        json.put("companyName", companyName);
+        json.put("positionTitle", positionTitle);
+        json.put("date", date);
+        json.put("category", category != null ? category.name() : null);
+        json.put("extractedInfo", extractedInfo);
+        json.put("interviewDate", interviewDate);
+        json.put("interviewLocation", interviewLocation);
+        json.put("applicationStatus", applicationStatus);
+        // JSONObject rejects NaN and infinities
+        json.put("confidenceScore", Double.isFinite(confidenceScore) ? confidenceScore : 0.0);
+        json.put("isJobRelated", isJobRelated);
+        json.put("processedTimestamp", processedTimestamp);
+        json.put("applicationUrl", applicationUrl);
+        json.put("emailLink", emailLink);
+        json.put("provider", provider);
+        json.put("salaryRange", salaryRange);
+        json.put("workLocation", workLocation);
+        json.put("workType", workType);
+        json.put("contactPerson", contactPerson);
+        json.put("contactEmail", contactEmail);
+        json.put("nextSteps", nextSteps);
+        json.put("applicationDeadline", applicationDeadline);
+        json.put("requiredSkills", requiredSkills);
+        json.put("rejectionReason", rejectionReason);
+        json.put("offerDetails", offerDetails);
+        json.put("lastUpdated", lastUpdated);
+        json.put("emailTimestamp", emailTimestamp);
+        return json.toString();
+    }
+
+    /**
+     * Decodes a line written by {@link #toJsonLine()}.
+     *
+     * @return the record, or {@code null} when the line is not a valid JSON object
+     */
+    public static JobApplicationData fromJsonLine(String line) {
+        if (line == null) {
+            return null;
+        }
+        JSONObject json;
+        try {
+            json = new JSONObject(line);
+        } catch (JSONException e) {
+            return null;
+        }
+        JobApplicationData data = new JobApplicationData();
+        data.setEmailId(json.optString("emailId", null));
+        data.setSubject(json.optString("subject", null));
+        data.setFromEmail(json.optString("fromEmail", null));
+        data.setCompanyName(json.optString("companyName", null));
+        data.setPositionTitle(json.optString("positionTitle", null));
+        data.setDate(json.optString("date", null));
+        String categoryName = json.optString("category", null);
+        if (categoryName != null) {
+            try {
+                data.setCategory(EmailCategory.valueOf(categoryName));
+            } catch (IllegalArgumentException e) {
+                // Unknown category (renamed enum constant): leave it unset
+            }
+        }
+        data.setExtractedInfo(json.optString("extractedInfo", null));
+        data.setInterviewDate(json.optString("interviewDate", null));
+        data.setInterviewLocation(json.optString("interviewLocation", null));
+        data.setApplicationStatus(json.optString("applicationStatus", null));
+        data.setConfidenceScore(json.optDouble("confidenceScore", 0.0));
+        data.setJobRelated(json.optBoolean("isJobRelated", false));
+        data.setProcessedTimestamp(json.optString("processedTimestamp", null));
+        data.setApplicationUrl(json.optString("applicationUrl", null));
+        // setEmailId regenerated the link; the stored value wins (also when it was absent)
+        data.setEmailLink(json.optString("emailLink", null));
+        data.setProvider(json.optString("provider", null));
+        data.setSalaryRange(json.optString("salaryRange", null));
+        data.setWorkLocation(json.optString("workLocation", null));
+        data.setWorkType(json.optString("workType", null));
+        data.setContactPerson(json.optString("contactPerson", null));
+        data.setContactEmail(json.optString("contactEmail", null));
+        data.setNextSteps(json.optString("nextSteps", null));
+        data.setApplicationDeadline(json.optString("applicationDeadline", null));
+        data.setRequiredSkills(json.optString("requiredSkills", null));
+        data.setRejectionReason(json.optString("rejectionReason", null));
+        data.setOfferDetails(json.optString("offerDetails", null));
+        data.setLastUpdated(json.optString("lastUpdated", null));
+        data.setEmailTimestamp(json.optString("emailTimestamp", null));
+        return data;
+    }
+
+    /**
+     * Legacy {@code ||}-separated format. It cannot represent newlines or a {@code |} at the end of
+     * a field, so {@link DataStorage} now writes {@link #toJsonLine()} and only reads this format.
+     *
+     * @deprecated use {@link #toJsonLine()}
+     */
+    @Deprecated
     public String serialize() {
         return String.join("||",
                 emailId != null ? emailId : "",
@@ -185,9 +291,29 @@ public class JobApplicationData {
         );
     }
 
+    /**
+     * Number of {@code ||}-separated fields in a legacy record, or 0 for {@code null}. A legacy
+     * record needs at least {@link #LEGACY_MIN_FIELDS}.
+     */
+    static int legacyFieldCount(String serialized) {
+        return serialized == null ? 0 : serialized.split("\\|\\|", -1).length;
+    }
+
+    /** Minimum number of fields of a legacy {@code ||} record (the oldest format had 14). */
+    static final int LEGACY_MIN_FIELDS = 14;
+
+    /**
+     * Decodes the legacy {@code ||}-separated format written by {@link #serialize()}.
+     *
+     * @return the record, or {@code null} when the line has fewer than 14 fields
+     */
     public static JobApplicationData deserialize(String serialized) {
-        String[] parts = serialized.split("\\|\\|");
-        if (parts.length < 14) {
+        if (serialized == null) {
+            return null;
+        }
+        // -1 keeps trailing empty fields, which the old split silently dropped
+        String[] parts = serialized.split("\\|\\|", -1);
+        if (parts.length < LEGACY_MIN_FIELDS) {
             return null;
         }
 
