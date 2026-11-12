@@ -124,4 +124,45 @@ class EmailAnalysisServiceTest {
         assertThat(data.isJobRelated()).isFalse();
         assertThat(data.getCategory()).isNull();
     }
+
+    // ---- item 5: the caller can tell a failed AI call from a real answer ----
+
+    @Test
+    void usedAiAnswerIsReportedAsAiAnswer() {
+        EmailAnalysisService service = new EmailAnalysisService(
+                prompt -> "{\"isJobRelated\": true, \"confidenceScore\": 0.9, \"companyName\": \"Acme Ltd\"}");
+
+        EmailAnalysisService.AnalysisResult result = service.analyzeEmailDetailed("id-3", SUBJECT, FROM, DATE, BODY);
+
+        assertThat(result.outcome()).isEqualTo(EmailAnalysisService.Outcome.AI_ANSWER);
+        assertThat(result.shouldRetry()).isFalse();
+        assertThat(result.data().getCompanyName()).isEqualTo("Acme Ltd");
+    }
+
+    @Test
+    void failedAiCallIsReportedAsRetryableAndStillCarriesRuleBasedData() {
+        EmailAnalysisService service = new EmailAnalysisService(prompt -> {
+            throw new IllegalStateException("429 quota exceeded");
+        });
+
+        EmailAnalysisService.AnalysisResult result = service.analyzeEmailDetailed(
+                "id-3", "Thank you for applying", FROM, DATE, "We received your application.");
+
+        assertThat(result.outcome()).isEqualTo(EmailAnalysisService.Outcome.RULES_AFTER_AI_FAILURE);
+        assertThat(result.shouldRetry()).isTrue();
+        assertThat(result.data().getEmailId()).isEqualTo("id-3");
+        assertThat(result.data().isJobRelated()).isTrue();
+        assertThat(result.data().getCategory()).isEqualTo(EmailCategory.APPLICATION_CONFIRMATION);
+    }
+
+    @Test
+    void nullOrBlankAiAnswerIsReportedAsRetryable() {
+        for (String answer : new String[] {null, "", "  \n "}) {
+            EmailAnalysisService service = new EmailAnalysisService(prompt -> answer);
+
+            EmailAnalysisService.AnalysisResult result = service.analyzeEmailDetailed("id-3", SUBJECT, FROM, DATE, BODY);
+
+            assertThat(result.shouldRetry()).as("answer <%s>", answer).isTrue();
+        }
+    }
 }

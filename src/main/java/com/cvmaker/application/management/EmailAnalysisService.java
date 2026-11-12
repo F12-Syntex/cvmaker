@@ -30,17 +30,70 @@ public class EmailAnalysisService {
         this.searchService = null;
     }
 
+    /** Where the data of an {@link AnalysisResult} came from. */
+    public enum Outcome {
+        /** The LLM answered and its answer was used. */
+        AI_ANSWER,
+        /** The LLM answered, but the answer could not be used; keyword rules filled in. */
+        RULES_AFTER_BAD_ANSWER,
+        /** The LLM call failed or returned nothing (network, quota, timeout); keyword rules filled in. */
+        RULES_AFTER_AI_FAILURE
+    }
+
+    /**
+     * The analysis of one email together with how it was produced.
+     *
+     * @param data    the extracted data; never null
+     * @param outcome whether the data is the LLM's or a rule-based stand-in
+     */
+    public record AnalysisResult(JobApplicationData data, Outcome outcome) {
+
+        /**
+         * True when the LLM call itself failed, so the data is only a rule-based guess.
+         * The caller should not record the email as processed: a later run can analyse it properly.
+         */
+        public boolean shouldRetry() {
+            return outcome == Outcome.RULES_AFTER_AI_FAILURE;
+        }
+    }
+
+    /**
+     * Analyses an email and returns only the data. A failed AI call is not visible here;
+     * use {@link #analyzeEmailDetailed} when the caller must know about it.
+     */
     public JobApplicationData analyzeEmail(String emailId, String subject, String from, String date, String body) {
+        return analyzeEmailDetailed(emailId, subject, from, date, body).data();
+    }
+
+    /**
+     * Analyses an email and reports whether the LLM produced the result.
+     * Never throws for an LLM problem: the result then carries rule-based data and an
+     * {@link Outcome} that says what went wrong.
+     */
+    public AnalysisResult analyzeEmailDetailed(String emailId, String subject, String from, String date, String body) {
         // Extract plain text from HTML
         String cleanBody = extractTextFromHtml(body);
         String cleanSubject = extractTextFromHtml(subject);
 
-        System.out.printf("  ≡ƒöì Extracted text length: %d characters\n", cleanBody.length());
+        System.out.printf("  Extracted text length: %d characters\n", cleanBody.length());
 
         String prompt = buildEnhancedCategorizationPrompt(cleanSubject, from, cleanBody);
 
+        String aiResponse;
         try {
-            String aiResponse = llm.apply(prompt);
+            aiResponse = llm.apply(prompt);
+        } catch (RuntimeException e) {
+            System.err.println("AI call failed, using keyword rules for now: " + e.getMessage());
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_AI_FAILURE);
+        }
+        if (aiResponse == null || aiResponse.isBlank()) {
+            System.err.println("AI returned an empty answer, using keyword rules for now");
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_AI_FAILURE);
+        }
+
+        try {
             JobApplicationData jobData = parseEnhancedAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
 
             // Only perform web search if the email is job-related
@@ -48,10 +101,11 @@ public class EmailAnalysisService {
             //     enrichWithWebSearch(jobData);
             // }
 
-            return jobData;
-        } catch (Exception e) {
-            System.err.println("Error in AI categorization: " + e.getMessage());
-            return createFallbackData(emailId, cleanSubject, from, date, cleanBody);
+            return new AnalysisResult(jobData, Outcome.AI_ANSWER);
+        } catch (RuntimeException e) {
+            System.err.println("Error parsing AI response, using keyword rules: " + e.getMessage());
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_BAD_ANSWER);
         }
     }
 
@@ -222,70 +276,65 @@ public class EmailAnalysisService {
         );
     }
 
+    /** Builds the data from the LLM answer. Throws a RuntimeException when the answer cannot be used. */
     private JobApplicationData parseEnhancedAIResponse(String emailId, String subject, String from, String date, String body, String aiResponse) {
         JobApplicationData data = new JobApplicationData(emailId, subject, from, date);
 
-        try {
-            String cleanResponse = aiResponse.trim();
-            if (cleanResponse.startsWith("```json")) {
-                cleanResponse = cleanResponse.substring(7);
-            }
-            if (cleanResponse.endsWith("```")) {
-                cleanResponse = cleanResponse.substring(0, cleanResponse.length() - 3);
-            }
+        String cleanResponse = aiResponse.trim();
+        if (cleanResponse.startsWith("```json")) {
+            cleanResponse = cleanResponse.substring(7);
+        }
+        if (cleanResponse.endsWith("```")) {
+            cleanResponse = cleanResponse.substring(0, cleanResponse.length() - 3);
+        }
 
-            String isJobRelatedStr = extractJsonValue(cleanResponse, "isJobRelated");
-            boolean isJobRelated = "true".equalsIgnoreCase(isJobRelatedStr);
-            data.setJobRelated(isJobRelated);
+        String isJobRelatedStr = extractJsonValue(cleanResponse, "isJobRelated");
+        boolean isJobRelated = "true".equalsIgnoreCase(isJobRelatedStr);
+        data.setJobRelated(isJobRelated);
 
-            String confidenceStr = extractJsonValue(cleanResponse, "confidenceScore");
-            if (confidenceStr != null) {
-                try {
-                    data.setConfidenceScore(Double.parseDouble(confidenceStr));
-                } catch (NumberFormatException e) {
-                    data.setConfidenceScore(0.7);
-                }
-            } else {
+        String confidenceStr = extractJsonValue(cleanResponse, "confidenceScore");
+        if (confidenceStr != null) {
+            try {
+                data.setConfidenceScore(Double.parseDouble(confidenceStr));
+            } catch (NumberFormatException e) {
                 data.setConfidenceScore(0.7);
             }
-
-            if (!isJobRelated) {
-                return data;
-            }
-
-            // Basic fields
-            // The prompt asks for a display name ("Interview Invitation"); models also
-            // answer with the enum name or nothing. An unknown answer must not discard
-            // the other extracted fields, so fall back to the rule-based category.
-            String category = extractJsonValue(cleanResponse, "category");
-            data.setCategory(EmailCategory.fromLabel(category)
-                    .orElseGet(() -> EmailRuleClassifier.categorize(subject, body)));
-
-            data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
-            data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
-            data.setApplicationStatus(extractJsonValue(cleanResponse, "applicationStatus"));
-            data.setInterviewDate(extractJsonValue(cleanResponse, "interviewDate"));
-            data.setInterviewLocation(extractJsonValue(cleanResponse, "interviewLocation"));
-            data.setExtractedInfo(extractJsonValue(cleanResponse, "extractedInfo"));
-            data.setApplicationUrl(extractJsonValue(cleanResponse, "applicationUrl"));
-
-            // Enhanced fields
-            data.setProvider(determineProvider(from, body, extractJsonValue(cleanResponse, "provider")));
-            data.setWorkLocation(extractJsonValue(cleanResponse, "workLocation"));
-            data.setWorkType(extractJsonValue(cleanResponse, "workType"));
-            data.setSalaryRange(extractJsonValue(cleanResponse, "salaryRange"));
-            data.setContactPerson(extractJsonValue(cleanResponse, "contactPerson"));
-            data.setContactEmail(extractJsonValue(cleanResponse, "contactEmail"));
-            data.setNextSteps(extractJsonValue(cleanResponse, "nextSteps"));
-            data.setApplicationDeadline(extractJsonValue(cleanResponse, "applicationDeadline"));
-            data.setRequiredSkills(extractJsonValue(cleanResponse, "requiredSkills"));
-            data.setRejectionReason(extractJsonValue(cleanResponse, "rejectionReason"));
-            data.setOfferDetails(extractJsonValue(cleanResponse, "offerDetails"));
-
-        } catch (Exception e) {
-            System.err.println("Error parsing AI response: " + e.getMessage());
-            return createFallbackData(emailId, subject, from, date, body);
+        } else {
+            data.setConfidenceScore(0.7);
         }
+
+        if (!isJobRelated) {
+            return data;
+        }
+
+        // Basic fields
+        // The prompt asks for a display name ("Interview Invitation"); models also
+        // answer with the enum name or nothing. An unknown answer must not discard
+        // the other extracted fields, so fall back to the rule-based category.
+        String category = extractJsonValue(cleanResponse, "category");
+        data.setCategory(EmailCategory.fromLabel(category)
+                .orElseGet(() -> EmailRuleClassifier.categorize(subject, body)));
+
+        data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
+        data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
+        data.setApplicationStatus(extractJsonValue(cleanResponse, "applicationStatus"));
+        data.setInterviewDate(extractJsonValue(cleanResponse, "interviewDate"));
+        data.setInterviewLocation(extractJsonValue(cleanResponse, "interviewLocation"));
+        data.setExtractedInfo(extractJsonValue(cleanResponse, "extractedInfo"));
+        data.setApplicationUrl(extractJsonValue(cleanResponse, "applicationUrl"));
+
+        // Enhanced fields
+        data.setProvider(determineProvider(from, body, extractJsonValue(cleanResponse, "provider")));
+        data.setWorkLocation(extractJsonValue(cleanResponse, "workLocation"));
+        data.setWorkType(extractJsonValue(cleanResponse, "workType"));
+        data.setSalaryRange(extractJsonValue(cleanResponse, "salaryRange"));
+        data.setContactPerson(extractJsonValue(cleanResponse, "contactPerson"));
+        data.setContactEmail(extractJsonValue(cleanResponse, "contactEmail"));
+        data.setNextSteps(extractJsonValue(cleanResponse, "nextSteps"));
+        data.setApplicationDeadline(extractJsonValue(cleanResponse, "applicationDeadline"));
+        data.setRequiredSkills(extractJsonValue(cleanResponse, "requiredSkills"));
+        data.setRejectionReason(extractJsonValue(cleanResponse, "rejectionReason"));
+        data.setOfferDetails(extractJsonValue(cleanResponse, "offerDetails"));
 
         return data;
     }
