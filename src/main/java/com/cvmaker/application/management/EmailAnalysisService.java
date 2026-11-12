@@ -1,116 +1,102 @@
 package com.cvmaker.application.management;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.function.Function;
 
 import com.cvmaker.service.ai.AiService;
-import com.cvmaker.websearch.SearchResult;
-import com.cvmaker.websearch.SearchService;
+import com.cvmaker.util.LlmJson;
+import com.fasterxml.jackson.databind.JsonNode;
 
 public class EmailAnalysisService {
 
-    private final AiService aiService;
-    private final SearchService searchService;
+    /** Confidence recorded when the model gives none. */
+    static final double DEFAULT_CONFIDENCE = 0.7;
+
+    /** Sends a prompt to the LLM and returns its text answer. */
+    private final Function<String, String> llm;
 
     public EmailAnalysisService(AiService aiService) {
-        this.aiService = aiService;
-        this.searchService = new SearchService(ApplicationConfig.getExaApiKey());
+        this.llm = aiService::query;
     }
 
+    /**
+     * For tests: analyses emails with the given prompt-to-answer function instead of a
+     * real {@link AiService}, so no network or API key is needed.
+     */
+    EmailAnalysisService(Function<String, String> llm) {
+        this.llm = llm;
+    }
+
+    /** Where the data of an {@link AnalysisResult} came from. */
+    public enum Outcome {
+        /** The LLM answered and its answer was used. */
+        AI_ANSWER,
+        /** The LLM answered, but the answer could not be used; keyword rules filled in. */
+        RULES_AFTER_BAD_ANSWER,
+        /** The LLM call failed or returned nothing (network, quota, timeout); keyword rules filled in. */
+        RULES_AFTER_AI_FAILURE
+    }
+
+    /**
+     * The analysis of one email together with how it was produced.
+     *
+     * @param data    the extracted data; never null
+     * @param outcome whether the data is the LLM's or a rule-based stand-in
+     */
+    public record AnalysisResult(JobApplicationData data, Outcome outcome) {
+
+        /**
+         * True when the LLM call itself failed, so the data is only a rule-based guess.
+         * The caller should not record the email as processed: a later run can analyse it properly.
+         */
+        public boolean shouldRetry() {
+            return outcome == Outcome.RULES_AFTER_AI_FAILURE;
+        }
+    }
+
+    /**
+     * Analyses an email and returns only the data. A failed AI call is not visible here;
+     * use {@link #analyzeEmailDetailed} when the caller must know about it.
+     */
     public JobApplicationData analyzeEmail(String emailId, String subject, String from, String date, String body) {
+        return analyzeEmailDetailed(emailId, subject, from, date, body).data();
+    }
+
+    /**
+     * Analyses an email and reports whether the LLM produced the result.
+     * Never throws for an LLM problem: the result then carries rule-based data and an
+     * {@link Outcome} that says what went wrong.
+     */
+    public AnalysisResult analyzeEmailDetailed(String emailId, String subject, String from, String date, String body) {
         // Extract plain text from HTML
         String cleanBody = extractTextFromHtml(body);
         String cleanSubject = extractTextFromHtml(subject);
 
-        System.out.printf("  ≡ƒöì Extracted text length: %d characters\n", cleanBody.length());
+        System.out.printf("  Extracted text length: %d characters\n", cleanBody.length());
 
         String prompt = buildEnhancedCategorizationPrompt(cleanSubject, from, cleanBody);
 
+        String aiResponse;
         try {
-            String aiResponse = aiService.query(prompt);
+            aiResponse = llm.apply(prompt);
+        } catch (RuntimeException e) {
+            System.err.println("AI call failed, using keyword rules for now: " + e.getMessage());
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_AI_FAILURE);
+        }
+        if (aiResponse == null || aiResponse.isBlank()) {
+            System.err.println("AI returned an empty answer, using keyword rules for now");
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_AI_FAILURE);
+        }
+
+        try {
             JobApplicationData jobData = parseEnhancedAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
-
-            // Only perform web search if the email is job-related
-            // if (jobData.isJobRelated() && jobData.getCompanyName() != null) {
-            //     enrichWithWebSearch(jobData);
-            // }
-
-            return jobData;
-        } catch (Exception e) {
-            System.err.println("Error in AI categorization: " + e.getMessage());
-            return createFallbackData(emailId, cleanSubject, from, date, cleanBody);
+            return new AnalysisResult(jobData, Outcome.AI_ANSWER);
+        } catch (RuntimeException e) {
+            System.err.println("Error parsing AI response, using keyword rules: " + e.getMessage());
+            return new AnalysisResult(createFallbackData(emailId, cleanSubject, from, date, cleanBody),
+                    Outcome.RULES_AFTER_BAD_ANSWER);
         }
-    }
-
-    private void enrichWithWebSearch(JobApplicationData jobData) {
-        try {
-            // Search for job application page
-            String applicationQuery = String.format("site:careers.* OR site:jobs.* \"%s\" \"%s\" apply",
-                    jobData.getCompanyName(),
-                    jobData.getPositionTitle() != null ? jobData.getPositionTitle() : "");
-
-            List<SearchResult> applicationResults = searchService.search(applicationQuery);
-
-            // Search for hiring manager/recruiter contact
-            String contactQuery = String.format("\"%s\" recruiter OR \"talent acquisition\" OR \"hiring manager\" email contact",
-                    jobData.getCompanyName());
-
-            List<SearchResult> contactResults = searchService.search(contactQuery);
-
-            //ask ai for the most relevant results
-            if (applicationResults.isEmpty() && contactResults.isEmpty()) {
-                System.out.println("No relevant results found for " + jobData.getCompanyName());
-                return;
-            }
-
-            System.out.println("Found " + applicationResults.size() + " application results and " + contactResults.size() + " contact results for " + jobData.getCompanyName());
-
-            //use ai to determine the most correct results, and set them
-            String applicationText = applicationResults.isEmpty() ? "" : applicationResults.get(0).getSnippet();
-            String contactText = contactResults.isEmpty() ? "" : contactResults.get(0).getSnippet();
-
-            String enrichmentPrompt = String.format("""
-            Analyze the following information and extract relevant details for job application enrichment:
-            Application Information: %s
-            Contact Information: %s
-            Return a JSON response with the following fields:
-            - applicationUrl: URL of the job application page (if found)
-            - contactPerson: Name of the recruiter or hiring manager (if found)
-            - contactEmail: Email address of the recruiter or hiring manager (if found)
-            - extractedInfo: Brief summary of key information (max 100 words)
-            """, applicationText, contactText);
-            String enrichmentResponse = aiService.query(enrichmentPrompt);
-            System.out.println("Enrichment AI Response: " + enrichmentResponse);
-            // Parse the enrichment response
-            String applicationUrl = extractJsonValue(enrichmentResponse, "applicationUrl");
-            String contactPerson = extractJsonValue(enrichmentResponse, "contactPerson");
-            String contactEmail = extractJsonValue(enrichmentResponse, "contactEmail");
-            String extractedInfo = extractJsonValue(enrichmentResponse, "extractedInfo");
-            // Set the enriched data in the job application data
-            if (applicationUrl != null && !applicationUrl.isEmpty()) {
-                jobData.setApplicationUrl(applicationUrl);
-            }
-            if (contactPerson != null && !contactPerson.isEmpty()) {
-                jobData.setContactPerson(contactPerson);
-            }
-            if (contactEmail != null && !contactEmail.isEmpty()) {
-                jobData.setContactEmail(contactEmail);
-            }
-            if (extractedInfo != null && !extractedInfo.isEmpty()) {
-                jobData.setExtractedInfo(extractedInfo);
-            }
-
-        } catch (IOException e) {
-            System.err.println("Error in web search enrichment: " + e.getMessage());
-        }
-    }
-
-    private String extractEmailFromText(String text) {
-        Pattern pattern = Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,6}");
-        Matcher matcher = pattern.matcher(text);
-        return matcher.find() ? matcher.group() : null;
     }
 
     private String extractTextFromHtml(String htmlContent) {
@@ -211,191 +197,86 @@ public class EmailAnalysisService {
         );
     }
 
+    /** Builds the data from the LLM answer. Throws a RuntimeException when the answer cannot be used. */
     private JobApplicationData parseEnhancedAIResponse(String emailId, String subject, String from, String date, String body, String aiResponse) {
         JobApplicationData data = new JobApplicationData(emailId, subject, from, date);
 
-        try {
-            String cleanResponse = aiResponse.trim();
-            if (cleanResponse.startsWith("```json")) {
-                cleanResponse = cleanResponse.substring(7);
-            }
-            if (cleanResponse.endsWith("```")) {
-                cleanResponse = cleanResponse.substring(0, cleanResponse.length() - 3);
-            }
+        JsonNode json = LlmJson.extractObject(aiResponse)
+                .orElseThrow(() -> new IllegalArgumentException("the answer holds no JSON object"));
 
-            String isJobRelatedStr = extractJsonValue(cleanResponse, "isJobRelated");
-            boolean isJobRelated = "true".equalsIgnoreCase(isJobRelatedStr);
-            data.setJobRelated(isJobRelated);
+        Boolean isJobRelated = LlmJson.bool(json, "isJobRelated");
+        if (isJobRelated == null) {
+            throw new IllegalArgumentException("the answer has no usable isJobRelated field");
+        }
+        data.setJobRelated(isJobRelated);
+        data.setConfidenceScore(confidenceFrom(LlmJson.number(json, "confidenceScore")));
 
-            String confidenceStr = extractJsonValue(cleanResponse, "confidenceScore");
-            if (confidenceStr != null) {
-                try {
-                    data.setConfidenceScore(Double.parseDouble(confidenceStr));
-                } catch (NumberFormatException e) {
-                    data.setConfidenceScore(0.7);
-                }
-            } else {
-                data.setConfidenceScore(0.7);
-            }
-
-            if (!isJobRelated) {
-                return data;
-            }
-
-            // Basic fields
-            String category = extractJsonValue(cleanResponse, "category");
-            try {
-                data.setCategory(EmailCategory.valueOf(category));
-            } catch (IllegalArgumentException e) {
-                // Use fallback categorization
-            }
-
-            data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
-            data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
-            data.setApplicationStatus(extractJsonValue(cleanResponse, "applicationStatus"));
-            data.setInterviewDate(extractJsonValue(cleanResponse, "interviewDate"));
-            data.setInterviewLocation(extractJsonValue(cleanResponse, "interviewLocation"));
-            data.setExtractedInfo(extractJsonValue(cleanResponse, "extractedInfo"));
-            data.setApplicationUrl(extractJsonValue(cleanResponse, "applicationUrl"));
-
-            // Enhanced fields
-            data.setProvider(determineProvider(from, body, extractJsonValue(cleanResponse, "provider")));
-            data.setWorkLocation(extractJsonValue(cleanResponse, "workLocation"));
-            data.setWorkType(extractJsonValue(cleanResponse, "workType"));
-            data.setSalaryRange(extractJsonValue(cleanResponse, "salaryRange"));
-            data.setContactPerson(extractJsonValue(cleanResponse, "contactPerson"));
-            data.setContactEmail(extractJsonValue(cleanResponse, "contactEmail"));
-            data.setNextSteps(extractJsonValue(cleanResponse, "nextSteps"));
-            data.setApplicationDeadline(extractJsonValue(cleanResponse, "applicationDeadline"));
-            data.setRequiredSkills(extractJsonValue(cleanResponse, "requiredSkills"));
-            data.setRejectionReason(extractJsonValue(cleanResponse, "rejectionReason"));
-            data.setOfferDetails(extractJsonValue(cleanResponse, "offerDetails"));
-
-        } catch (Exception e) {
-            System.err.println("Error parsing AI response: " + e.getMessage());
-            return createFallbackData(emailId, subject, from, date, body);
+        if (!isJobRelated) {
+            return data;
         }
 
+        // Basic fields
+        // The prompt asks for a display name ("Interview Invitation"); models also
+        // answer with the enum name or nothing. An unknown answer must not discard
+        // the other extracted fields, so fall back to the rule-based category.
+        data.setCategory(EmailCategory.fromLabel(LlmJson.text(json, "category"))
+                .orElseGet(() -> EmailRuleClassifier.categorize(subject, body)));
+
+        data.setCompanyName(LlmJson.text(json, "companyName"));
+        data.setPositionTitle(LlmJson.text(json, "positionTitle"));
+        data.setApplicationStatus(LlmJson.text(json, "applicationStatus"));
+        data.setInterviewDate(LlmJson.text(json, "interviewDate"));
+        data.setInterviewLocation(LlmJson.text(json, "interviewLocation"));
+        data.setExtractedInfo(LlmJson.text(json, "extractedInfo"));
+        data.setApplicationUrl(LlmJson.text(json, "applicationUrl"));
+
+        // Enhanced fields
+        data.setProvider(determineProvider(from, body, LlmJson.text(json, "provider")));
+        data.setWorkLocation(LlmJson.text(json, "workLocation"));
+        data.setWorkType(LlmJson.text(json, "workType"));
+        data.setSalaryRange(LlmJson.text(json, "salaryRange"));
+        data.setContactPerson(LlmJson.text(json, "contactPerson"));
+        data.setContactEmail(LlmJson.text(json, "contactEmail"));
+        data.setNextSteps(LlmJson.text(json, "nextSteps"));
+        data.setApplicationDeadline(LlmJson.text(json, "applicationDeadline"));
+        data.setRequiredSkills(LlmJson.text(json, "requiredSkills"));
+        data.setRejectionReason(LlmJson.text(json, "rejectionReason"));
+        data.setOfferDetails(LlmJson.text(json, "offerDetails"));
+
         return data;
+    }
+
+    /**
+     * Turns the model's confidence into a value from 0 to 1. A missing value becomes
+     * {@link #DEFAULT_CONFIDENCE}; a percentage such as 90 becomes 0.9.
+     */
+    static double confidenceFrom(Double raw) {
+        if (raw == null) {
+            return DEFAULT_CONFIDENCE;
+        }
+        double value = raw > 1.0 && raw <= 100.0 ? raw / 100.0 : raw;
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     private String determineProvider(String from, String body, String aiProvider) {
         if (aiProvider != null && !aiProvider.trim().isEmpty()) {
             return aiProvider;
         }
-
-        String combinedText = (from + " " + body).toLowerCase();
-
-        if (combinedText.contains("linkedin") || from.toLowerCase().contains("linkedin")) {
-            return "LinkedIn";
-        } else if (combinedText.contains("indeed") || from.toLowerCase().contains("indeed")) {
-            return "Indeed";
-        } else if (combinedText.contains("glassdoor") || from.toLowerCase().contains("glassdoor")) {
-            return "Glassdoor";
-        } else if (combinedText.contains("angellist") || from.toLowerCase().contains("angellist")) {
-            return "AngelList";
-        } else if (combinedText.contains("ziprecruiter") || from.toLowerCase().contains("ziprecruiter")) {
-            return "ZipRecruiter";
-        } else if (combinedText.contains("monster") || from.toLowerCase().contains("monster")) {
-            return "Monster";
-        } else if (combinedText.contains("dice") || from.toLowerCase().contains("dice")) {
-            return "Dice";
-        } else if (from.toLowerCase().contains("noreply") || from.toLowerCase().contains("no-reply")) {
-            return "Company Website";
-        } else {
-            return "Direct Email";
-        }
-    }
-
-    private String extractJsonValue(String json, String key) {
-        Pattern pattern = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"|\"" + key + "\"\\s*:\\s*([^,}\\]]+)");
-        Matcher matcher = pattern.matcher(json);
-        if (matcher.find()) {
-            String value = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-            return value != null ? value.trim().replaceAll("\"$", "") : null;
-        }
-        return null;
+        return EmailRuleClassifier.provider(from, body);
     }
 
     private JobApplicationData createFallbackData(String emailId, String subject, String from, String date, String body) {
         JobApplicationData fallbackData = new JobApplicationData(emailId, subject, from, date);
 
-        boolean isJobRelated = isJobRelatedRuleBased(subject, from, body);
+        boolean isJobRelated = EmailRuleClassifier.isJobRelated(subject, from, body);
         fallbackData.setJobRelated(isJobRelated);
 
         if (isJobRelated) {
-            fallbackData.setCategory(categorizeEmailRuleBased(subject, body));
+            fallbackData.setCategory(EmailRuleClassifier.categorize(subject, body));
             fallbackData.setConfidenceScore(0.5);
             fallbackData.setProvider(determineProvider(from, body, null));
         }
 
         return fallbackData;
-    }
-
-    private boolean isJobRelatedRuleBased(String subject, String from, String body) {
-        String combinedText = (subject + " " + from + " " + body).toLowerCase();
-
-        // First, check for common non-job indicators
-        String[] nonJobKeywords = {
-            "newsletter", "update", "opportunity", "opportunities", "career tips",
-            "network", "connect", "subscription", "weekly", "monthly",
-            "social", "notification", "general", "blast", "all", "invitation",
-            "community", "platform", "discover", "explore", "course", "training"
-        };
-
-        for (String keyword : nonJobKeywords) {
-            if (combinedText.contains(keyword)) {
-                return false;
-            }
-        }
-
-        // Strong indicators of user's specific job application
-        String[] specificApplicationKeywords = {
-            "your application", "you applied", "your candidacy", "your resume",
-            "your interview", "we received your", "thank you for applying",
-            "your interest in", "moving forward with your", "regarding your application",
-            "your recent application", "your submission"
-        };
-
-        for (String phrase : specificApplicationKeywords) {
-            if (combinedText.contains(phrase)) {
-                return true;
-            }
-        }
-
-        // Explicit job application stages
-        if ((combinedText.contains("interview") && (combinedText.contains("schedule") || combinedText.contains("confirm")))
-                || (combinedText.contains("offer") && combinedText.contains("position"))
-                || (combinedText.contains("reject") && combinedText.contains("application"))
-                || (combinedText.contains("not moving forward") && combinedText.contains("application"))) {
-            return true;
-        }
-
-        return false;
-    }
-
-    private EmailCategory categorizeEmailRuleBased(String subject, String body) {
-        String combinedText = (subject + " " + body).toLowerCase();
-
-        if (combinedText.contains("interview") && (combinedText.contains("invite") || combinedText.contains("schedule"))) {
-            return EmailCategory.INTERVIEW_INVITATION;
-        }
-        if (combinedText.contains("offer") && (combinedText.contains("job") || combinedText.contains("position"))) {
-            return EmailCategory.OFFER;
-        }
-        if (combinedText.contains("reject") || combinedText.contains("unfortunately") || combinedText.contains("not moving forward")) {
-            return EmailCategory.REJECTION;
-        }
-        if (combinedText.contains("application received") || combinedText.contains("thank you for applying")) {
-            return EmailCategory.APPLICATION_CONFIRMATION;
-        }
-        if (combinedText.contains("assessment") || combinedText.contains("test") || combinedText.contains("coding challenge")) {
-            return EmailCategory.ASSESSMENT_REQUEST;
-        }
-        if (combinedText.contains("phone") && combinedText.contains("screen")) {
-            return EmailCategory.SCREENING_CALL;
-        }
-
-        return EmailCategory.APPLICATION_CONFIRMATION;
     }
 }
