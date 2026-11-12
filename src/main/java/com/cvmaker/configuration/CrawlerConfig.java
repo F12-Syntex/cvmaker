@@ -5,6 +5,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
 
 import lombok.Data;
@@ -13,6 +16,17 @@ import lombok.Data;
 public class CrawlerConfig {
 
     private static final String DEFAULT_CONFIG_FILE = "configuration/reedcrawler.properties";
+
+    /** Property that opts in to {@link #UNSAFE_BROWSER_ARGS}. Defaults to {@code false}. */
+    public static final String UNSAFE_BROWSER_ARGS_PROPERTY = "browser.unsafe.args.enabled";
+
+    /**
+     * Chromium flags that weaken the browser's security. The crawler uses a persistent profile that
+     * holds the user's logins and visits arbitrary sites, so these flags are only passed to Chromium
+     * when {@link #UNSAFE_BROWSER_ARGS_PROPERTY} is {@code true}. Without the opt-in they are removed
+     * from {@code browser.args}; with it they are added if missing.
+     */
+    public static final List<String> UNSAFE_BROWSER_ARGS = List.of("--no-sandbox", "--disable-web-security");
 
     // Main configuration
     private String configFile;
@@ -37,7 +51,10 @@ public class CrawlerConfig {
     private int viewportWidth;
     private int viewportHeight;
     private String userAgent;
+    /** Configured {@code browser.args}; read it through {@link #getBrowserArgs()}, which applies the opt-in. */
     private String browserArgs;
+    /** {@code browser.unsafe.args.enabled}: pass {@link #UNSAFE_BROWSER_ARGS} to Chromium. */
+    private boolean unsafeBrowserArgsEnabled;
     private String acceptHeader;
     private String acceptLanguageHeader;
 
@@ -118,7 +135,8 @@ public class CrawlerConfig {
         this.viewportWidth = 1920;
         this.viewportHeight = 1080;
         this.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-        this.browserArgs = "--disable-blink-features=AutomationControlled,--disable-dev-shm-usage,--no-sandbox,--disable-web-security";
+        this.browserArgs = "--disable-blink-features=AutomationControlled,--disable-dev-shm-usage";
+        this.unsafeBrowserArgsEnabled = false;
         this.acceptHeader = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
         this.acceptLanguageHeader = "en-US,en;q=0.9";
 
@@ -176,6 +194,8 @@ public class CrawlerConfig {
         this.viewportHeight = TypedProperties.intProp(properties, "browser.viewport.height", this.viewportHeight, 1);
         this.userAgent = TypedProperties.stringProp(properties, "browser.user.agent", this.userAgent);
         this.browserArgs = TypedProperties.stringProp(properties, "browser.args", this.browserArgs);
+        this.unsafeBrowserArgsEnabled = TypedProperties.boolProp(properties, UNSAFE_BROWSER_ARGS_PROPERTY, this.unsafeBrowserArgsEnabled);
+        warnAboutUnsafeBrowserArgs();
         this.acceptHeader = TypedProperties.stringProp(properties, "browser.accept.header", this.acceptHeader);
         this.acceptLanguageHeader = TypedProperties.stringProp(properties, "browser.accept.language.header", this.acceptLanguageHeader);
 
@@ -197,6 +217,71 @@ public class CrawlerConfig {
         // Site settings
         this.baseUrl = TypedProperties.stringProp(properties, "site.base.url", this.baseUrl);
         this.searchKeywords = TypedProperties.stringProp(properties, "site.search.keywords", this.searchKeywords);
+    }
+
+    /**
+     * Effective Chromium arguments as a comma-separated string (the format callers split on ",").
+     * {@link #UNSAFE_BROWSER_ARGS} are only included when {@code browser.unsafe.args.enabled=true}.
+     */
+    public String getBrowserArgs() {
+        return String.join(",", getBrowserArgList());
+    }
+
+    /** Effective Chromium arguments, trimmed, without empty entries, unsafe flags only when opted in. */
+    public List<String> getBrowserArgList() {
+        return effectiveBrowserArgs(browserArgs, unsafeBrowserArgsEnabled);
+    }
+
+    /**
+     * Compute the Chromium arguments to launch with from the configured comma-separated list.
+     * Without {@code allowUnsafe} every {@link #UNSAFE_BROWSER_ARGS} entry (also in the
+     * {@code --flag=value} form) is removed; with it, missing unsafe flags are appended.
+     */
+    static List<String> effectiveBrowserArgs(String configuredArgs, boolean allowUnsafe) {
+        List<String> result = new ArrayList<>();
+        for (String arg : TypedProperties.splitList(configuredArgs)) {
+            if (!allowUnsafe && isUnsafeBrowserArg(arg)) {
+                continue;
+            }
+            if (!result.contains(arg)) {
+                result.add(arg);
+            }
+        }
+        if (allowUnsafe) {
+            for (String unsafe : UNSAFE_BROWSER_ARGS) {
+                if (result.stream().noneMatch(arg -> flagName(arg).equals(unsafe))) {
+                    result.add(unsafe);
+                }
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    private static boolean isUnsafeBrowserArg(String arg) {
+        return UNSAFE_BROWSER_ARGS.contains(flagName(arg));
+    }
+
+    private static String flagName(String arg) {
+        int eq = arg.indexOf('=');
+        return eq < 0 ? arg : arg.substring(0, eq);
+    }
+
+    private void warnAboutUnsafeBrowserArgs() {
+        if (unsafeBrowserArgsEnabled) {
+            System.out.println("Warning: " + UNSAFE_BROWSER_ARGS_PROPERTY + "=true, launching Chromium with "
+                    + UNSAFE_BROWSER_ARGS + " on profile '" + browserDataDir + "'. Only use this on a throwaway profile.");
+            return;
+        }
+        List<String> dropped = new ArrayList<>();
+        for (String arg : TypedProperties.splitList(browserArgs)) {
+            if (isUnsafeBrowserArg(arg)) {
+                dropped.add(arg);
+            }
+        }
+        if (!dropped.isEmpty()) {
+            System.out.println("Warning: ignoring unsafe browser.args " + dropped + "; set "
+                    + UNSAFE_BROWSER_ARGS_PROPERTY + "=true to allow them.");
+        }
     }
 
     /**

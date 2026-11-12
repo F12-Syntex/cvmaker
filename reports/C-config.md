@@ -51,3 +51,41 @@ All public constructors, getters, setters and their return types on `ConfigManag
 - Unused crawler settings in `reedcrawler.properties` (rate limit, retry, screenshot, stealth) are
   item 36 (task T14) and were not touched.
 - Comma splitting of `browser.args` still cannot express a flag whose value contains a comma.
+
+## Item 16: unsafe Chromium flags on by default for a logged-in persistent profile
+
+**What was wrong**
+- The `CrawlerConfig` default `browser.args` and `configuration/reedcrawler.properties` both included
+  `--no-sandbox` and `--disable-web-security`. They applied to the persistent profile
+  (`playwright-session`) that holds the user's logins, while the generic and form crawlers visit
+  arbitrary sites.
+
+**What changed**
+- New documented property `browser.unsafe.args.enabled` (default `false`), exposed as
+  `CrawlerConfig.UNSAFE_BROWSER_ARGS_PROPERTY`; the flag list is `CrawlerConfig.UNSAFE_BROWSER_ARGS`.
+  Accessors: `isUnsafeBrowserArgsEnabled()` / `setUnsafeBrowserArgsEnabled(boolean)` (Lombok).
+- Default `browser.args` is now `--disable-blink-features=AutomationControlled,--disable-dev-shm-usage`.
+- `getBrowserArgs()` keeps its name and `String` return type (comma-joined, as `AbstractJobCrawler`
+  splits it) but now returns the effective list: without the opt-in, the unsafe flags (also in
+  `--flag=value` form) are removed even if a user's `browser.args` or a `setBrowserArgs` call
+  still lists them; with the opt-in they are added if missing. Entries are trimmed, empty ones and
+  duplicates dropped. New `getBrowserArgList()` returns the same as a `List<String>`.
+- Loading prints a warning when unsafe flags are ignored, and a louder one when the opt-in is on.
+- `configuration/reedcrawler.properties`: removed the two flags from `browser.args` and added the
+  commented `browser.unsafe.args.enabled=false`. No other setting in any properties file changed;
+  `config.properties` and `autoapplication.config.properties` have no browser settings.
+
+**How verified**
+- `CrawlerConfigBrowserArgsTest` (8 tests): defaults exclude the flags; flags in `browser.args` and
+  via the setter are stripped without opt-in; `--flag=value` forms are stripped; a misspelled
+  opt-in stays off; opt-in adds each flag once; the shipped `reedcrawler.properties` has the property
+  set to `false`, no unsafe flag on its `browser.args` line, and its other settings (150 applications,
+  keywords `labour`) still load. Before the change the test did not compile (new accessors) and the
+  default/shipped-file assertions describe the old unsafe behaviour. `mvn -q test` passes (34 tests).
+
+**Left / deliberately not done**
+- `AbstractJobCrawler` (owned by T3) still does `getBrowserArgs().split(",")`. If `browser.args` is
+  empty this passes one empty argument to Chromium (same as before). T3 or a later task can switch
+  it to `getBrowserArgList()`.
+- Users who run Chromium as root in a container will now see a sandbox launch error until they set
+  `browser.unsafe.args.enabled=true`; this is intended.
