@@ -1,7 +1,10 @@
 package com.cvmaker.crawler.reed;
 
+import java.util.List;
+
 import com.cvmaker.configuration.CrawlerConfig;
 import com.cvmaker.crawler.AbstractJobCrawler;
+import com.cvmaker.crawler.CrawlDelays;
 import com.cvmaker.crawler.JobInfo;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
@@ -15,20 +18,23 @@ public class JobSearchService {
     private final Page page;
     private final CrawlerConfig config;
     private final AbstractJobCrawler crawler;
+    private final ResultsPageCursor cursor = new ResultsPageCursor();
 
     private static final String SEARCH_INPUT_SELECTOR = "input[name='keywords']";
 
-    // Broad job card selectors
-    private static final String[] JOB_CARDS_SELECTORS = {
+    // Job card selectors in priority order. Only the first one that matches on a results page is
+    // used, so overlapping selectors no longer visit the same cards twice. The former
+    // "[data-qa*='job']" entry was dropped: it also matched elements inside each card (titles,
+    // company names), so it never selected whole cards.
+    static final List<String> JOB_CARDS_SELECTORS = List.of(
         ".job-card_jobCard__MkcJD",
         "[class*='job-card_jobCard']",
         ".job-result",
         ".card.job-card",
         ".job-card",
         "article[data-qa='job-result']",
-        "[data-qa*='job']",
         ".job-result-card"
-    };
+    );
 
     // Easy Apply button selectors
     private static final String[] EASY_APPLY_SELECTORS = {
@@ -46,9 +52,6 @@ public class JobSearchService {
         "a[class*='Easy']"
     };
 
-    // Keyword fallback
-    private static final String[] EASY_APPLY_KEYWORDS = {"easy apply", "quick apply"};
-
     public JobSearchService(Page page, CrawlerConfig config, AbstractJobCrawler crawler) {
         this.page = page;
         this.config = config;
@@ -62,9 +65,7 @@ public class JobSearchService {
         try {
             page.navigate(config.getBaseUrl());
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-
-            // Small delay
-            page.waitForTimeout(config.getCrawlingSpeed());
+            page.waitForTimeout(delay(config.getPageLoadDelay()));
 
             Locator input = page.locator(SEARCH_INPUT_SELECTOR).first();
             if (input == null || !input.isVisible()) {
@@ -76,14 +77,12 @@ public class JobSearchService {
             input.press("Enter");
 
             page.waitForLoadState(LoadState.DOMCONTENTLOADED);
-            page.waitForTimeout(config.getCrawlingSpeed());
+            page.waitForTimeout(delay(config.getSearchResultsDelay()));
 
-            for (String selector : JOB_CARDS_SELECTORS) {
-                Locator jobs = page.locator(selector.trim());
-                if (jobs.count() > 0) {
-                    System.out.println("✅ Found " + jobs.count() + " job results");
-                    return true;
-                }
+            cursor.startResultsPage(page.url());
+            if (cursor.resolveSelector(JOB_CARDS_SELECTORS, this::countMatches)) {
+                System.out.println("✅ Found " + countMatches(cursor.getSelector()) + " job results");
+                return true;
             }
 
             return false;
@@ -94,57 +93,40 @@ public class JobSearchService {
     }
 
     /**
-     * Find the next Easy Apply job and click it.
+     * Find the next Easy Apply job on the current results page and click it. If the browser has
+     * left the results page (after visiting or applying to a job), it goes back first.
      */
     public JobInfo findNextEasyApplyJob() {
         try {
-            for (String selector : JOB_CARDS_SELECTORS) {
-                Locator jobs = page.locator(selector.trim());
-                int count = jobs.count();
+            if (!returnToResults()) {
+                return null;
+            }
+            if (!cursor.resolveSelector(JOB_CARDS_SELECTORS, this::countMatches)) {
+                System.out.println("⚠️ No job cards found on the results page");
+                return null;
+            }
 
-                for (int i = crawler.getJobsChecked(); i < count; i++) {
-                    crawler.setJobsChecked(crawler.getJobsChecked() + 1);
-                    Locator jobCard = jobs.nth(i);
+            Locator jobs = page.locator(cursor.getSelector());
+            int index;
+            while ((index = cursor.nextCardIndex(jobs.count())) >= 0) {
+                crawler.setJobsChecked(crawler.getJobsChecked() + 1);
+                int checked = crawler.getJobsChecked();
+                Locator jobCard = jobs.nth(index);
 
-                    JobInfo job = extractJobInfo(jobCard, crawler.getJobsChecked());
+                JobInfo job = extractJobInfo(jobCard, checked);
 
-                    // 1. Easy Apply button selectors
-                    for (String eaSelector : EASY_APPLY_SELECTORS) {
-                        Locator eaButton = jobCard.locator(eaSelector.trim());
-                        if (eaButton.count() > 0 && eaButton.first().isVisible()) {
-                            crawler.setEasyApplyJobsFound(crawler.getEasyApplyJobsFound() + 1);
-                            System.out.printf("(%d) %s - %s - applying\n",
-                                    crawler.getJobsChecked(),
-                                    job.getTitle(),
-                                    job.getCompany());
-                            jobCard.click();
-                            return job;
-                        }
-                    }
-
-                    // 2. Keyword fallback
-                    String text = jobCard.textContent();
-                    if (text != null) {
-                        String lower = text.toLowerCase();
-                        for (String keyword : EASY_APPLY_KEYWORDS) {
-                            if (lower.contains(keyword)) {
-                                crawler.setEasyApplyJobsFound(crawler.getEasyApplyJobsFound() + 1);
-                                System.out.printf("(%d) %s - %s - applying\n",
-                                        crawler.getJobsChecked(),
-                                        job.getTitle(),
-                                        job.getCompany());
-                                jobCard.click();
-                                return job;
-                            }
-                        }
-                    }
-
-                    // If not Easy Apply → skip
-                    System.out.printf("(%d) %s - %s - skipping\n",
-                            crawler.getJobsChecked(),
-                            job.getTitle(),
-                            job.getCompany());
+                if (isEasyApply(jobCard)) {
+                    crawler.setEasyApplyJobsFound(crawler.getEasyApplyJobsFound() + 1);
+                    System.out.printf("(%d) %s - %s - applying%n",
+                            checked, job.getTitle(), job.getCompany());
+                    jobCard.click();
+                    page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+                    page.waitForTimeout(delay(config.getJobCardLoadDelay()));
+                    return job;
                 }
+
+                System.out.printf("(%d) %s - %s - skipping%n",
+                        checked, job.getTitle(), job.getCompany());
             }
         } catch (Exception e) {
             System.out.println("⚠️ Error finding job: " + e.getMessage());
@@ -152,31 +134,62 @@ public class JobSearchService {
         return null;
     }
 
-    private JobInfo extractJobInfo(Locator jobCard, int index) {
-        JobInfo job = new JobInfo();
-
+    /**
+     * Go back to the results page recorded by {@link #performJobSearch()} if the browser has left
+     * it. The card index is kept, so the walk continues with the next unchecked card.
+     *
+     * @return true if the browser is on the results page (or no results page was recorded)
+     */
+    public boolean returnToResults() {
         try {
-            // Correct selector for title
-            Locator titleEl = jobCard.locator("a[data-qa='job-card-title']").first();
-            if (titleEl != null && titleEl.count() > 0) {
-                job.setTitle(titleEl.textContent().trim());
-            } else {
-                job.setTitle("Job " + index);
+            if (!cursor.needsReturn(page.url())) {
+                return true;
             }
-
-            // Company selector (likely still works, but adding fallback)
-            Locator companyEl = jobCard.locator("[data-qa='job-company-name']").first();
-            if (companyEl != null && companyEl.count() > 0) {
-                job.setCompany(companyEl.textContent().trim());
-            } else {
-                job.setCompany("Unknown Company");
-            }
-
+            page.navigate(cursor.getResultsUrl());
+            page.waitForLoadState(LoadState.DOMCONTENTLOADED);
+            page.waitForTimeout(delay(config.getSearchResultsDelay()));
+            return true;
         } catch (Exception e) {
-            job.setTitle("Job " + index);
-            job.setCompany("Unknown Company");
+            System.out.println("⚠️ Could not return to search results: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isEasyApply(Locator jobCard) {
+        // 1. Easy Apply button selectors
+        for (String eaSelector : EASY_APPLY_SELECTORS) {
+            Locator eaButton = jobCard.locator(eaSelector);
+            if (eaButton.count() > 0 && eaButton.first().isVisible()) {
+                return true;
+            }
         }
 
+        // 2. Keyword fallback
+        return ReedText.mentionsEasyApply(jobCard.textContent());
+    }
+
+    private int countMatches(String selector) {
+        return page.locator(selector).count();
+    }
+
+    private int delay(int baseDelayMs) {
+        return CrawlDelays.adjustedDelay(baseDelayMs, config.getCrawlingSpeed());
+    }
+
+    private JobInfo extractJobInfo(Locator jobCard, int index) {
+        JobInfo job = new JobInfo();
+        // Title and company are read independently, so a failure on one keeps the other.
+        job.setTitle(ReedText.cardField(textOf(jobCard, "a[data-qa='job-card-title']"), "Job " + index));
+        job.setCompany(ReedText.cardField(textOf(jobCard, "[data-qa='job-company-name']"), "Unknown Company"));
         return job;
+    }
+
+    private static String textOf(Locator scope, String selector) {
+        try {
+            Locator element = scope.locator(selector).first();
+            return element.count() > 0 ? element.textContent() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

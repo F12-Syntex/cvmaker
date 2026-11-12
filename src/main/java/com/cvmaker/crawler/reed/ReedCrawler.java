@@ -5,6 +5,7 @@ import java.nio.file.Path;
 
 import com.cvmaker.configuration.CrawlerConfig;
 import com.cvmaker.crawler.AbstractJobCrawler;
+import com.cvmaker.crawler.CrawlDelays;
 import com.cvmaker.crawler.JobInfo;
 
 public class ReedCrawler extends AbstractJobCrawler {
@@ -66,7 +67,11 @@ public class ReedCrawler extends AbstractJobCrawler {
                     }
                 }
 
-                page.waitForTimeout(adjustedDelay(crawlerConfig.getApplicationDelay()));
+                // Leave the job or application page before pausing, so the next search step
+                // starts from the results list.
+                searchService.returnToResults();
+                page.waitForTimeout(CrawlDelays.adjustedDelay(
+                        crawlerConfig.getApplicationDelay(), crawlerConfig.getCrawlingSpeed()));
             }
 
             printSessionSummary();

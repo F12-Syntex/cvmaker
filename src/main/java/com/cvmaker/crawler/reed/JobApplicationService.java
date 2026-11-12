@@ -3,6 +3,7 @@ package com.cvmaker.crawler.reed;
 import java.nio.file.Path;
 
 import com.cvmaker.configuration.CrawlerConfig;
+import com.cvmaker.crawler.CrawlDelays;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.WaitForSelectorState;
@@ -190,7 +191,6 @@ public class JobApplicationService {
     }
 
     private int adjustedDelay(int baseDelay) {
-        float speedMultiplier = 1.5f - (config.getCrawlingSpeed() * 0.12f);
-        return Math.max(100, Math.round(baseDelay * speedMultiplier));
+        return CrawlDelays.adjustedDelay(baseDelay, config.getCrawlingSpeed());
     }
 }
