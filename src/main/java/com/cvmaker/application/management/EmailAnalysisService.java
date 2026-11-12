@@ -2,6 +2,7 @@ package com.cvmaker.application.management;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -11,12 +12,22 @@ import com.cvmaker.websearch.SearchService;
 
 public class EmailAnalysisService {
 
-    private final AiService aiService;
+    /** Sends a prompt to the LLM and returns its text answer. */
+    private final Function<String, String> llm;
     private final SearchService searchService;
 
     public EmailAnalysisService(AiService aiService) {
-        this.aiService = aiService;
+        this.llm = aiService::query;
         this.searchService = new SearchService(ApplicationConfig.getExaApiKey());
+    }
+
+    /**
+     * For tests: analyses emails with the given prompt-to-answer function instead of a
+     * real {@link AiService}, so no network or API key is needed.
+     */
+    EmailAnalysisService(Function<String, String> llm) {
+        this.llm = llm;
+        this.searchService = null;
     }
 
     public JobApplicationData analyzeEmail(String emailId, String subject, String from, String date, String body) {
@@ -29,7 +40,7 @@ public class EmailAnalysisService {
         String prompt = buildEnhancedCategorizationPrompt(cleanSubject, from, cleanBody);
 
         try {
-            String aiResponse = aiService.query(prompt);
+            String aiResponse = llm.apply(prompt);
             JobApplicationData jobData = parseEnhancedAIResponse(emailId, cleanSubject, from, date, cleanBody, aiResponse);
 
             // Only perform web search if the email is job-related
@@ -81,7 +92,7 @@ public class EmailAnalysisService {
             - contactEmail: Email address of the recruiter or hiring manager (if found)
             - extractedInfo: Brief summary of key information (max 100 words)
             """, applicationText, contactText);
-            String enrichmentResponse = aiService.query(enrichmentPrompt);
+            String enrichmentResponse = llm.apply(enrichmentPrompt);
             System.out.println("Enrichment AI Response: " + enrichmentResponse);
             // Parse the enrichment response
             String applicationUrl = extractJsonValue(enrichmentResponse, "applicationUrl");
@@ -243,12 +254,12 @@ public class EmailAnalysisService {
             }
 
             // Basic fields
+            // The prompt asks for a display name ("Interview Invitation"); models also
+            // answer with the enum name or nothing. An unknown answer must not discard
+            // the other extracted fields, so fall back to the rule-based category.
             String category = extractJsonValue(cleanResponse, "category");
-            try {
-                data.setCategory(EmailCategory.valueOf(category));
-            } catch (IllegalArgumentException e) {
-                // Use fallback categorization
-            }
+            data.setCategory(EmailCategory.fromLabel(category)
+                    .orElseGet(() -> categorizeEmailRuleBased(subject, body)));
 
             data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
             data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
