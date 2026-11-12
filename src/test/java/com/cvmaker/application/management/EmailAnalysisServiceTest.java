@@ -165,4 +165,103 @@ class EmailAnalysisServiceTest {
             assertThat(result.shouldRetry()).as("answer <%s>", answer).isTrue();
         }
     }
+
+    // ---- item 6: real-looking LLM answers ----
+
+    @Test
+    void fencedAnswerWithProseNullsEscapesAndNestedValuesIsParsed() {
+        JobApplicationData data = analyze("""
+                Here is the JSON you asked for:
+
+                ```json
+                {
+                  "isJobRelated": true,
+                  "confidenceScore": 0.95,
+                  "category": "Job Offer",
+                  "companyName": "Acme \\"Rockets\\" Ltd, London",
+                  "positionTitle": "Senior Tester (Payments, Cards)",
+                  "applicationStatus": "Offered",
+                  "provider": null,
+                  "workLocation": "null",
+                  "workType": "",
+                  "salaryRange": null,
+                  "contactPerson": "Jane Doe",
+                  "requiredSkills": ["Java", "SQL", "Selenium"],
+                  "offerDetails": {"salary": "£50,000", "startDate": "1 March"},
+                  "extractedInfo": "Offer made; reply by Friday {see portal}.",
+                  "applicationUrl": "https://careers.acme.example/offers/123?ref=a,b"
+                }
+                ```
+
+                Let me know if you need anything else!
+                """);
+
+        assertThat(data.isJobRelated()).isTrue();
+        assertThat(data.getConfidenceScore()).isEqualTo(0.95);
+        assertThat(data.getCategory()).isEqualTo(EmailCategory.OFFER);
+        // The regex parser stopped at the first escaped quote and at the first comma.
+        assertThat(data.getCompanyName()).isEqualTo("Acme \"Rockets\" Ltd, London");
+        assertThat(data.getPositionTitle()).isEqualTo("Senior Tester (Payments, Cards)");
+        assertThat(data.getApplicationUrl()).isEqualTo("https://careers.acme.example/offers/123?ref=a,b");
+        assertThat(data.getExtractedInfo()).isEqualTo("Offer made; reply by Friday {see portal}.");
+        // JSON null, the text "null" and "" all mean "not given", never the word "null".
+        assertThat(data.getWorkLocation()).isNull();
+        assertThat(data.getWorkType()).isNull();
+        assertThat(data.getSalaryRange()).isNull();
+        assertThat(data.getInterviewDate()).isNull();
+        // A null provider falls back to the sender-based guess.
+        assertThat(data.getProvider()).isEqualTo("Direct Email");
+        assertThat(data.getRequiredSkills()).isEqualTo("Java, SQL, Selenium");
+        assertThat(data.getOfferDetails()).isEqualTo("salary: £50,000; startDate: 1 March");
+    }
+
+    @Test
+    void jsonNullCompanyStaysNullInsteadOfTheWordNull() {
+        JobApplicationData data = analyze(
+                "{\"isJobRelated\": true, \"confidenceScore\": 0.8, \"companyName\": null, \"positionTitle\": \"Tester\"}");
+
+        assertThat(data.getCompanyName()).isNull();
+        assertThat(data.getPositionTitle()).isEqualTo("Tester");
+    }
+
+    @Test
+    void booleanAndNumberGivenAsTextAreAccepted() {
+        JobApplicationData data = analyze(
+                "{\"isJobRelated\": \"true\", \"confidenceScore\": \"0.6\", \"companyName\": \"Acme Ltd\"}");
+
+        assertThat(data.isJobRelated()).isTrue();
+        assertThat(data.getConfidenceScore()).isEqualTo(0.6);
+    }
+
+    @Test
+    void confidenceIsDefaultedAndKeptWithinZeroToOne() {
+        assertThat(EmailAnalysisService.confidenceFrom(null)).isEqualTo(EmailAnalysisService.DEFAULT_CONFIDENCE);
+        assertThat(EmailAnalysisService.confidenceFrom(0.85)).isEqualTo(0.85);
+        assertThat(EmailAnalysisService.confidenceFrom(1.0)).isEqualTo(1.0);
+        assertThat(EmailAnalysisService.confidenceFrom(90.0)).isEqualTo(0.9);
+        assertThat(EmailAnalysisService.confidenceFrom(-0.2)).isEqualTo(0.0);
+        assertThat(EmailAnalysisService.confidenceFrom(250.0)).isEqualTo(1.0);
+    }
+
+    @Test
+    void answerWithoutUsableJsonFallsBackToRulesAndIsNotRetried() {
+        String[] unusable = {
+            "I'm sorry, I can't help with that.",
+            "{\"isJobRelated\": true, \"companyName\": \"Acm",
+            "{\"companyName\": \"Acme Ltd\"}",
+            "{\"isJobRelated\": \"perhaps\"}"
+        };
+        for (String answer : unusable) {
+            EmailAnalysisService service = new EmailAnalysisService(prompt -> answer);
+
+            EmailAnalysisService.AnalysisResult result = service.analyzeEmailDetailed(
+                    "id-4", "Thank you for applying", FROM, DATE, "We received your application.");
+
+            assertThat(result.outcome()).as(answer).isEqualTo(EmailAnalysisService.Outcome.RULES_AFTER_BAD_ANSWER);
+            assertThat(result.shouldRetry()).as(answer).isFalse();
+            // The keyword rules decide, so this confirmation is still recognised.
+            assertThat(result.data().isJobRelated()).as(answer).isTrue();
+            assertThat(result.data().getConfidenceScore()).as(answer).isEqualTo(0.5);
+        }
+    }
 }

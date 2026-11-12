@@ -7,10 +7,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.cvmaker.service.ai.AiService;
+import com.cvmaker.util.LlmJson;
 import com.cvmaker.websearch.SearchResult;
 import com.cvmaker.websearch.SearchService;
+import com.fasterxml.jackson.databind.JsonNode;
 
 public class EmailAnalysisService {
+
+    /** Confidence recorded when the model gives none. */
+    static final double DEFAULT_CONFIDENCE = 0.7;
 
     /** Sends a prompt to the LLM and returns its text answer. */
     private final Function<String, String> llm;
@@ -149,10 +154,11 @@ public class EmailAnalysisService {
             String enrichmentResponse = llm.apply(enrichmentPrompt);
             System.out.println("Enrichment AI Response: " + enrichmentResponse);
             // Parse the enrichment response
-            String applicationUrl = extractJsonValue(enrichmentResponse, "applicationUrl");
-            String contactPerson = extractJsonValue(enrichmentResponse, "contactPerson");
-            String contactEmail = extractJsonValue(enrichmentResponse, "contactEmail");
-            String extractedInfo = extractJsonValue(enrichmentResponse, "extractedInfo");
+            JsonNode enrichment = LlmJson.extractObject(enrichmentResponse).orElse(null);
+            String applicationUrl = LlmJson.text(enrichment, "applicationUrl");
+            String contactPerson = LlmJson.text(enrichment, "contactPerson");
+            String contactEmail = LlmJson.text(enrichment, "contactEmail");
+            String extractedInfo = LlmJson.text(enrichment, "extractedInfo");
             // Set the enriched data in the job application data
             if (applicationUrl != null && !applicationUrl.isEmpty()) {
                 jobData.setApplicationUrl(applicationUrl);
@@ -280,28 +286,15 @@ public class EmailAnalysisService {
     private JobApplicationData parseEnhancedAIResponse(String emailId, String subject, String from, String date, String body, String aiResponse) {
         JobApplicationData data = new JobApplicationData(emailId, subject, from, date);
 
-        String cleanResponse = aiResponse.trim();
-        if (cleanResponse.startsWith("```json")) {
-            cleanResponse = cleanResponse.substring(7);
-        }
-        if (cleanResponse.endsWith("```")) {
-            cleanResponse = cleanResponse.substring(0, cleanResponse.length() - 3);
-        }
+        JsonNode json = LlmJson.extractObject(aiResponse)
+                .orElseThrow(() -> new IllegalArgumentException("the answer holds no JSON object"));
 
-        String isJobRelatedStr = extractJsonValue(cleanResponse, "isJobRelated");
-        boolean isJobRelated = "true".equalsIgnoreCase(isJobRelatedStr);
+        Boolean isJobRelated = LlmJson.bool(json, "isJobRelated");
+        if (isJobRelated == null) {
+            throw new IllegalArgumentException("the answer has no usable isJobRelated field");
+        }
         data.setJobRelated(isJobRelated);
-
-        String confidenceStr = extractJsonValue(cleanResponse, "confidenceScore");
-        if (confidenceStr != null) {
-            try {
-                data.setConfidenceScore(Double.parseDouble(confidenceStr));
-            } catch (NumberFormatException e) {
-                data.setConfidenceScore(0.7);
-            }
-        } else {
-            data.setConfidenceScore(0.7);
-        }
+        data.setConfidenceScore(confidenceFrom(LlmJson.number(json, "confidenceScore")));
 
         if (!isJobRelated) {
             return data;
@@ -311,32 +304,43 @@ public class EmailAnalysisService {
         // The prompt asks for a display name ("Interview Invitation"); models also
         // answer with the enum name or nothing. An unknown answer must not discard
         // the other extracted fields, so fall back to the rule-based category.
-        String category = extractJsonValue(cleanResponse, "category");
-        data.setCategory(EmailCategory.fromLabel(category)
+        data.setCategory(EmailCategory.fromLabel(LlmJson.text(json, "category"))
                 .orElseGet(() -> EmailRuleClassifier.categorize(subject, body)));
 
-        data.setCompanyName(extractJsonValue(cleanResponse, "companyName"));
-        data.setPositionTitle(extractJsonValue(cleanResponse, "positionTitle"));
-        data.setApplicationStatus(extractJsonValue(cleanResponse, "applicationStatus"));
-        data.setInterviewDate(extractJsonValue(cleanResponse, "interviewDate"));
-        data.setInterviewLocation(extractJsonValue(cleanResponse, "interviewLocation"));
-        data.setExtractedInfo(extractJsonValue(cleanResponse, "extractedInfo"));
-        data.setApplicationUrl(extractJsonValue(cleanResponse, "applicationUrl"));
+        data.setCompanyName(LlmJson.text(json, "companyName"));
+        data.setPositionTitle(LlmJson.text(json, "positionTitle"));
+        data.setApplicationStatus(LlmJson.text(json, "applicationStatus"));
+        data.setInterviewDate(LlmJson.text(json, "interviewDate"));
+        data.setInterviewLocation(LlmJson.text(json, "interviewLocation"));
+        data.setExtractedInfo(LlmJson.text(json, "extractedInfo"));
+        data.setApplicationUrl(LlmJson.text(json, "applicationUrl"));
 
         // Enhanced fields
-        data.setProvider(determineProvider(from, body, extractJsonValue(cleanResponse, "provider")));
-        data.setWorkLocation(extractJsonValue(cleanResponse, "workLocation"));
-        data.setWorkType(extractJsonValue(cleanResponse, "workType"));
-        data.setSalaryRange(extractJsonValue(cleanResponse, "salaryRange"));
-        data.setContactPerson(extractJsonValue(cleanResponse, "contactPerson"));
-        data.setContactEmail(extractJsonValue(cleanResponse, "contactEmail"));
-        data.setNextSteps(extractJsonValue(cleanResponse, "nextSteps"));
-        data.setApplicationDeadline(extractJsonValue(cleanResponse, "applicationDeadline"));
-        data.setRequiredSkills(extractJsonValue(cleanResponse, "requiredSkills"));
-        data.setRejectionReason(extractJsonValue(cleanResponse, "rejectionReason"));
-        data.setOfferDetails(extractJsonValue(cleanResponse, "offerDetails"));
+        data.setProvider(determineProvider(from, body, LlmJson.text(json, "provider")));
+        data.setWorkLocation(LlmJson.text(json, "workLocation"));
+        data.setWorkType(LlmJson.text(json, "workType"));
+        data.setSalaryRange(LlmJson.text(json, "salaryRange"));
+        data.setContactPerson(LlmJson.text(json, "contactPerson"));
+        data.setContactEmail(LlmJson.text(json, "contactEmail"));
+        data.setNextSteps(LlmJson.text(json, "nextSteps"));
+        data.setApplicationDeadline(LlmJson.text(json, "applicationDeadline"));
+        data.setRequiredSkills(LlmJson.text(json, "requiredSkills"));
+        data.setRejectionReason(LlmJson.text(json, "rejectionReason"));
+        data.setOfferDetails(LlmJson.text(json, "offerDetails"));
 
         return data;
+    }
+
+    /**
+     * Turns the model's confidence into a value from 0 to 1. A missing value becomes
+     * {@link #DEFAULT_CONFIDENCE}; a percentage such as 90 becomes 0.9.
+     */
+    static double confidenceFrom(Double raw) {
+        if (raw == null) {
+            return DEFAULT_CONFIDENCE;
+        }
+        double value = raw > 1.0 && raw <= 100.0 ? raw / 100.0 : raw;
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     private String determineProvider(String from, String body, String aiProvider) {
@@ -344,16 +348,6 @@ public class EmailAnalysisService {
             return aiProvider;
         }
         return EmailRuleClassifier.provider(from, body);
-    }
-
-    private String extractJsonValue(String json, String key) {
-        Pattern pattern = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"|\"" + key + "\"\\s*:\\s*([^,}\\]]+)");
-        Matcher matcher = pattern.matcher(json);
-        if (matcher.find()) {
-            String value = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-            return value != null ? value.trim().replaceAll("\"$", "") : null;
-        }
-        return null;
     }
 
     private JobApplicationData createFallbackData(String emailId, String subject, String from, String date, String body) {

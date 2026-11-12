@@ -1,9 +1,11 @@
 package com.cvmaker.crawler.generic.utils;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+
+import com.cvmaker.util.LlmJson;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * Utility for parsing AI JSON responses into usable field mappings.
@@ -11,10 +13,14 @@ import java.util.Map;
 public class AIResponseParser {
 
     /**
-     * Extracts and parses JSON from an AI response string.
+     * Extracts and parses the JSON object in an AI response string.
+     * Code fences and text around the object are ignored. A nested object or array is
+     * kept as compact JSON text, so its structure is not lost. Fields that are null are
+     * left out.
      *
-     * @param aiResponse Raw response from AI service
-     * @return Parsed field-value map
+     * @param aiResponse Raw response from AI service; may be null
+     * @return Parsed field-value map; empty (and modifiable) when the response holds no
+     *         JSON object
      */
     public static Map<String, String> parse(String aiResponse) {
         Map<String, String> context = new HashMap<>();
@@ -22,23 +28,13 @@ public class AIResponseParser {
             return context;
         }
 
-        try {
-            String jsonStr = aiResponse.substring(
-                aiResponse.indexOf("{"),
-                aiResponse.lastIndexOf("}") + 1
-            );
-
-            Map<String, Object> parsed = new ObjectMapper().readValue(jsonStr, Map.class);
-
-            for (Map.Entry<String, Object> entry : parsed.entrySet()) {
-                if (entry.getValue() != null) {
-                    context.put(entry.getKey(), entry.getValue().toString());
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("Warning: Could not parse AI response as JSON: " + e.getMessage());
+        Optional<JsonNode> json = LlmJson.extractObject(aiResponse);
+        if (json.isEmpty()) {
+            System.out.println("Warning: Could not find a JSON object in the AI response");
+            return context;
         }
 
+        context.putAll(LlmJson.toStringMap(json.get()));
         return context;
     }
 }
