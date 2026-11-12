@@ -72,3 +72,14 @@
 - `GoogleSheetsService` is a 1141-line file; edit with narrow changes.
 - Mixed `System.exit` in `App`; keep tests off `main` methods.
 - Browser extension `auto-apply-plugin/` is plain JS with no build or test tooling.
+
+## After T0 (build is green)
+- pom: `maven.compiler.release=21`, maven-compiler-plugin 3.13.0, maven-surefire-plugin 3.5.2. No -D flags needed any more.
+- Compile: `cd /home/user/cvmaker && mvn -q compile`
+- Test: `mvn -q test` (single class: `mvn -q test -Dtest=PageInputCacheManagerCSVTest`)
+- Package: `mvn -q package -DskipTests`
+- Test stack (test scope): JUnit 5 (junit-jupiter 5.11.4), AssertJ 3.27.3, Mockito 5.14.2 (mockito-core + mockito-junit-jupiter). JUnit 4 was removed.
+- Tests live in `src/test/java/com/cvmaker/...`, mirroring the main package, named `*Test.java`. Use `@TempDir` for files; no network, Playwright or OpenAI.
+- `.gitignore` now ignores `/cache/` (repo-root runtime cache only); `src/main/java/com/cvmaker/crawler/cache/` is tracked.
+- `PageInputCacheManagerCSV` was reconstructed from its single call site (AbstractJobCrawler); owner's local copy should replace it if it differs.
+- `ApplicationConfig` uses `Dotenv.configure().ignoreIfMissing().load()`, so it loads without a `.env` (getters return null / defaults).

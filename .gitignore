@@ -11,4 +11,4 @@ tokens/StoredCredential
 playwright-session
 reed-session
 temp
-cache/
+/cache/

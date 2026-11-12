@@ -10,7 +10,7 @@ public class ApplicationConfig {
     public static final String JOB_APPLICATIONS_DB_FILE = "job_applications.txt";
     public static final String SYSTEM_STATE_FILE = "system_state.txt";
 
-    private static final Dotenv dotenv = Dotenv.load();
+    private static final Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
 
     public static String getGoogleClientId() {
         return dotenv.get("GOOGLE_CLIENT_ID");
