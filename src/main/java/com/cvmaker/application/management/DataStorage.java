@@ -15,7 +15,7 @@ public class DataStorage {
 
     public Set<String> loadProcessedEmailIds() {
         Set<String> ids = new HashSet<>();
-        File file = new File(ApplicationConfig.PROCESSED_EMAILS_FILE);
+        File file = ApplicationConfig.getProcessedEmailsFile().toFile();
         if (file.exists()) {
             try (Scanner scanner = new Scanner(file)) {
                 while (scanner.hasNextLine()) {
@@ -74,7 +74,7 @@ public class DataStorage {
 
     public Map<String, JobApplicationData> loadJobApplicationsDb() {
         Map<String, JobApplicationData> db = new HashMap<>();
-        File file = new File(ApplicationConfig.JOB_APPLICATIONS_DB_FILE);
+        File file = ApplicationConfig.getJobApplicationsDbFile().toFile();
         if (file.exists()) {
             try (Scanner scanner = new Scanner(file)) {
                 while (scanner.hasNextLine()) {
@@ -94,7 +94,7 @@ public class DataStorage {
     }
 
     public void saveProcessedEmailId(String emailId) {
-        try (FileWriter writer = new FileWriter(ApplicationConfig.PROCESSED_EMAILS_FILE, true)) {
+        try (FileWriter writer = new FileWriter(ApplicationConfig.getProcessedEmailsFile().toFile(), true)) {
             writer.write(emailId + "\n");
         } catch (IOException e) {
             System.err.println("Error saving processed email ID: " + e.getMessage());
@@ -104,7 +104,7 @@ public class DataStorage {
     public void saveJobApplicationData(JobApplicationData data) {
         data.setProcessedTimestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
 
-        try (FileWriter writer = new FileWriter(ApplicationConfig.JOB_APPLICATIONS_DB_FILE, true)) {
+        try (FileWriter writer = new FileWriter(ApplicationConfig.getJobApplicationsDbFile().toFile(), true)) {
             writer.write(data.serialize() + "\n");
         } catch (IOException e) {
             System.err.println("Error saving job application data: " + e.getMessage());
@@ -112,7 +112,7 @@ public class DataStorage {
     }
 
     public void saveSystemState() {
-        try (FileWriter writer = new FileWriter(ApplicationConfig.SYSTEM_STATE_FILE)) {
+        try (FileWriter writer = new FileWriter(ApplicationConfig.getSystemStateFile().toFile())) {
             writer.write("last_run=" + LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + "\n");
         } catch (IOException e) {
             System.err.println("Error saving system state: " + e.getMessage());
@@ -120,7 +120,7 @@ public class DataStorage {
     }
 
     public void loadSystemState() {
-        File stateFile = new File(ApplicationConfig.SYSTEM_STATE_FILE);
+        File stateFile = ApplicationConfig.getSystemStateFile().toFile();
         if (stateFile.exists()) {
             try (Scanner scanner = new Scanner(stateFile)) {
                 while (scanner.hasNextLine()) {

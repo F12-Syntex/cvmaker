@@ -43,8 +43,8 @@ public class GmailService {
         final NetHttpTransport HTTP_TRANSPORT = GoogleNetHttpTransport.newTrustedTransport();
 
         GoogleClientSecrets.Details details = new GoogleClientSecrets.Details()
-                .setClientId(ApplicationConfig.getGoogleClientId())
-                .setClientSecret(ApplicationConfig.getGoogleClientSecret());
+                .setClientId(ApplicationConfig.require(ApplicationConfig.GOOGLE_CLIENT_ID))
+                .setClientSecret(ApplicationConfig.require(ApplicationConfig.GOOGLE_CLIENT_SECRET));
         GoogleClientSecrets clientSecrets = new GoogleClientSecrets().setInstalled(details);
 
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
