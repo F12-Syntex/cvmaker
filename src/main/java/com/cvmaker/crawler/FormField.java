@@ -1,5 +1,7 @@
 package com.cvmaker.crawler;
 
+import java.util.Locale;
+
 import com.microsoft.playwright.Locator;
 
 /**
@@ -9,6 +11,7 @@ public class FormField {
     private Locator element;
     private String identifier;
     private String type;
+    private String tagName;
     private String label;
     private boolean required;
     private boolean readOnly;
@@ -26,6 +29,7 @@ public class FormField {
     }
 
     private void extractFieldProperties() {
+        this.tagName = readTagName(element);
         try {
             this.type = element.getAttribute("type");
             this.name = element.getAttribute("name");
@@ -45,6 +49,33 @@ public class FormField {
         }
     }
 
+    private static String readTagName(Locator element) {
+        try {
+            Object tag = element.evaluate("el => el.tagName");
+            return tag == null ? null : tag.toString().toLowerCase(Locale.ROOT);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Works out what kind of control a field is from its tag name and its {@code type} attribute.
+     * {@code <select>} and {@code <textarea>} have no {@code type} attribute, so the tag decides
+     * for them; for {@code <input>} (or an unknown tag) the type decides, defaulting to "text".
+     *
+     * @param tagName the element's tag name, any case, may be null
+     * @param type    the element's {@code type} attribute, any case, may be null
+     * @return a lower-case kind such as "select", "textarea", "checkbox", "radio" or "text"
+     */
+    public static String kindOf(String tagName, String type) {
+        String tag = tagName == null ? "" : tagName.trim().toLowerCase(Locale.ROOT);
+        if (tag.equals("select") || tag.equals("textarea")) {
+            return tag;
+        }
+        String t = type == null ? "" : type.trim().toLowerCase(Locale.ROOT);
+        return t.isEmpty() ? "text" : t;
+    }
+
     private String generateIdentifier() {
         if (id != null && !id.isEmpty()) return id;
         if (name != null && !name.isEmpty()) return name;
@@ -53,23 +84,8 @@ public class FormField {
     }
 
     private String findAssociatedLabel() {
-        try {
-            if (id != null && !id.isEmpty()) {
-                Locator label = element.page().locator("label[for='" + id + "']");
-                if (label.count() > 0) {
-                    return label.first().textContent();
-                }
-            }
-            
-            // Try finding nearest label
-            Locator nearestLabel = element.locator("xpath=./preceding::label[1]");
-            if (nearestLabel.count() > 0) {
-                return nearestLabel.first().textContent();
-            }
-        } catch (Exception e) {
-            // Continue without label
-        }
-        return null;
+        String label = LabelResolver.findLabel(element, id);
+        return label.isEmpty() ? null : label;
     }
 
     // Getters and Setters
@@ -94,6 +110,24 @@ public class FormField {
 
     public String getType() {
         return type != null ? type : "text";
+    }
+
+    /**
+     * @return the lower-case tag name ("input", "select", "textarea"), or null if unknown
+     */
+    public String getTagName() {
+        return tagName;
+    }
+
+    public void setTagName(String tagName) {
+        this.tagName = tagName;
+    }
+
+    /**
+     * @return the kind of control, decided by the tag first and then the type; see {@link #kindOf}
+     */
+    public String getKind() {
+        return kindOf(tagName, type);
     }
 
     public void setType(String type) {
@@ -166,7 +200,7 @@ public class FormField {
 
     @Override
     public String toString() {
-        return String.format("FormField{identifier='%s', type='%s', label='%s', required=%s}",
-                identifier, type, label, required);
+        return String.format("FormField{identifier='%s', tag='%s', type='%s', label='%s', required=%s}",
+                identifier, tagName, type, label, required);
     }
 }

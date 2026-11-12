@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.cvmaker.crawler.LabelResolver;
 import com.microsoft.playwright.Locator;
 
 /**
@@ -84,22 +85,7 @@ public class FieldExtractor {
      * Try to find the label for a given field.
      */
     public static String findAssociatedLabel(Locator field) {
-        try {
-            String id = field.getAttribute("id");
-            if (id != null && !id.isEmpty()) {
-                Locator label = field.page().locator("label[for='" + id + "']");
-                if (label.count() > 0) {
-                    return label.first().textContent();
-                }
-            }
-            Locator nearestLabel = field.locator("xpath=./preceding::label[1]");
-            if (nearestLabel.count() > 0) {
-                return nearestLabel.first().textContent();
-            }
-        } catch (Exception e) {
-            // ignore
-        }
-        return "";
+        return LabelResolver.findLabel(field);
     }
 
     private static String safeAttr(Locator field, String name, String defaultValue) {

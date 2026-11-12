@@ -53,6 +53,10 @@ public class FormFiller {
 
             System.out.printf("✅ Form filling complete! Filled %d out of %d fields.\n",
                     successCount, totalFields);
+            if (!fieldHandler.getUnfilledFields().isEmpty()) {
+                System.out.println("⚠️ These fields were left unfilled; please complete them by hand:");
+                fieldHandler.getUnfilledFields().forEach(f -> System.out.println("   - " + f));
+            }
 
             System.out.println("\nPlease review the filled form and press Enter to submit...");
             System.in.read();
