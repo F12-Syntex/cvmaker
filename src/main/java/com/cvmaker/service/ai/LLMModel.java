@@ -39,6 +39,18 @@ public enum LLMModel {
     }
 
     /**
+     * The model to use when only the provider is known.
+     */
+    public static LLMModel defaultFor(LLMProvider provider) {
+        return switch (provider) {
+            case OPENAI ->
+                GPT_5_MINI;
+            case LOCAL ->
+                MISTRAL_SMALL_3_2;
+        };
+    }
+
+    /**
      * Which optional request parameters this model accepts.
      */
     public ModelCapabilities getCapabilities() {

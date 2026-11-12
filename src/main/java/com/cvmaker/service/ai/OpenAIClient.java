@@ -3,6 +3,7 @@ package com.cvmaker.service.ai;
 import java.util.Objects;
 
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.errors.OpenAIServiceException;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 
@@ -30,8 +31,20 @@ public class OpenAIClient implements LLMClient {
             ChatCompletion completion = client.chat().completions().create(params);
             return toResponse(completion, request);
         } catch (Exception e) {
-            throw new RuntimeException("OpenAI API call failed: " + e.getMessage(), e);
+            throw new LLMException("OpenAI API call failed: " + e.getMessage(), e, isRetryable(e));
         }
+    }
+
+    /**
+     * A request the API rejected (HTTP 4xx other than 408, 409 and 429) fails
+     * the same way every time, so it is marked as not worth retrying. So are an
+     * invalid request and an answer cut off by the token limit.
+     */
+    static boolean isRetryable(Exception e) {
+        if (e instanceof OpenAIServiceException service) {
+            return LLMException.isRetryableStatus(service.statusCode());
+        }
+        return LLMException.isRetryable(e);
     }
 
     /**
@@ -75,11 +88,12 @@ public class OpenAIClient implements LLMClient {
      * Maps the SDK response to an {@link LLMResponse}. A response without a
      * usage block is valid and gives a null {@link LLMResponse#getUsage()}.
      *
-     * @throws IllegalStateException when the response carries no text
+     * @throws LLMException when the response carries no text. It is not
+     * retryable when the token limit or the content filter caused it.
      */
     static LLMResponse toResponse(ChatCompletion completion, LLMRequest request) {
         if (completion.choices().isEmpty()) {
-            throw new IllegalStateException("Empty response from OpenAI API (no choices)");
+            throw new LLMException("Empty response from OpenAI API (no choices)", true);
         }
 
         ChatCompletion.Choice choice = completion.choices().get(0);
@@ -87,11 +101,13 @@ public class OpenAIClient implements LLMClient {
 
         if (content == null || content.isBlank()) {
             String finishReason = finishReasonOf(choice);
-            String hint = "length".equals(finishReason)
+            boolean cutOff = "length".equals(finishReason);
+            String hint = cutOff
                     ? "; the token limit was used up before any text was produced, so raise or remove maxTokens"
                     : "";
-            throw new IllegalStateException(
-                    "Empty response from OpenAI API (finish_reason=" + finishReason + ")" + hint);
+            throw new LLMException(
+                    "Empty response from OpenAI API (finish_reason=" + finishReason + ")" + hint,
+                    !cutOff && !"content_filter".equals(finishReason));
         }
 
         UsageStats usage = completion.usage()

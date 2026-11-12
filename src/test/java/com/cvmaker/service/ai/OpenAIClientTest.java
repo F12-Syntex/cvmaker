@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import com.openai.core.JsonValue;
+import com.openai.errors.OpenAIServiceException;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessage;
@@ -166,9 +167,10 @@ class OpenAIClientTest {
         ChatCompletion cutOff = completion("", ChatCompletion.Choice.FinishReason.LENGTH, usage(11, 100));
 
         assertThatThrownBy(() -> OpenAIClient.toResponse(cutOff, request("gpt-5-mini").build()))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(LLMException.class)
                 .hasMessageContaining("finish_reason=length")
-                .hasMessageContaining("maxTokens");
+                .hasMessageContaining("maxTokens")
+                .matches(e -> !((LLMException) e).isRetryable(), "is not retryable");
     }
 
     @Test
@@ -176,8 +178,18 @@ class OpenAIClientTest {
         ChatCompletion noText = completion(null, ChatCompletion.Choice.FinishReason.CONTENT_FILTER, null);
 
         assertThatThrownBy(() -> OpenAIClient.toResponse(noText, request("gpt-4.1").build()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("finish_reason=content_filter");
+                .isInstanceOf(LLMException.class)
+                .hasMessageContaining("finish_reason=content_filter")
+                .matches(e -> !((LLMException) e).isRetryable(), "is not retryable");
+    }
+
+    @Test
+    void emptyTextAfterANormalStopCanBeRetried() {
+        ChatCompletion blank = completion("  ", ChatCompletion.Choice.FinishReason.STOP, null);
+
+        assertThatThrownBy(() -> OpenAIClient.toResponse(blank, request("gpt-4.1").build()))
+                .isInstanceOf(LLMException.class)
+                .matches(e -> ((LLMException) e).isRetryable(), "is retryable");
     }
 
     // ---- complete() through a mocked SDK client ----
@@ -215,7 +227,35 @@ class OpenAIClientTest {
         assertThatThrownBy(() -> new OpenAIClient(sdk).complete(request("gpt-4.1").build()))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("OpenAI API call failed: boom")
-                .hasCause(boom);
+                .hasCause(boom)
+                .matches(e -> ((LLMException) e).isRetryable(), "is retryable");
+    }
+
+    @Test
+    void rejectedRequestIsMarkedAsNotRetryable() {
+        OpenAIServiceException badRequest = mock(OpenAIServiceException.class);
+        when(badRequest.statusCode()).thenReturn(400);
+        OpenAIServiceException overloaded = mock(OpenAIServiceException.class);
+        when(overloaded.statusCode()).thenReturn(503);
+        OpenAIServiceException rateLimited = mock(OpenAIServiceException.class);
+        when(rateLimited.statusCode()).thenReturn(429);
+
+        assertThat(OpenAIClient.isRetryable(badRequest)).isFalse();
+        assertThat(OpenAIClient.isRetryable(overloaded)).isTrue();
+        assertThat(OpenAIClient.isRetryable(rateLimited)).isTrue();
+        assertThat(OpenAIClient.isRetryable(new IllegalArgumentException("LLM request has no prompt"))).isFalse();
+        assertThat(OpenAIClient.isRetryable(new java.io.IOException("connection reset"))).isTrue();
+    }
+
+    @Test
+    void invalidRequestFailsWithoutCallingTheApi() {
+        com.openai.client.OpenAIClient sdk = mock(com.openai.client.OpenAIClient.class);
+
+        assertThatThrownBy(() -> new OpenAIClient(sdk).complete(LLMRequest.builder().model("gpt-4.1").build()))
+                .isInstanceOf(LLMException.class)
+                .hasMessageContaining("no prompt")
+                .matches(e -> !((LLMException) e).isRetryable(), "is not retryable");
+        org.mockito.Mockito.verifyNoInteractions(sdk);
     }
 
     @Test

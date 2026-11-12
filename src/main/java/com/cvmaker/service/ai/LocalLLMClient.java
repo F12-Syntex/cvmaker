@@ -113,8 +113,9 @@ public class LocalLLMClient implements LLMClient {
                 System.out.println("Response body: " + responseBody);
 
                 if (!response.isSuccessful()) {
-                    throw new RuntimeException("API returned status code: " + response.code()
-                            + " with body: " + responseBody);
+                    throw new LLMException("API returned status code: " + response.code()
+                            + " with body: " + responseBody,
+                            LLMException.isRetryableStatus(response.code()));
                 }
 
                 ObjectNode responseJson = objectMapper.readValue(responseBody, ObjectNode.class);
