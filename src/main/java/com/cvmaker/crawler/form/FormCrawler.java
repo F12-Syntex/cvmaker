@@ -7,6 +7,7 @@ import java.util.Map;
 
 import com.cvmaker.configuration.CrawlerConfig;
 import com.cvmaker.crawler.AbstractJobCrawler;
+import com.cvmaker.crawler.LabelResolver;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.LoadState;
@@ -246,22 +247,7 @@ public class FormCrawler extends AbstractJobCrawler {
     }
 
     private String joinedTextByIds(Page page, String ids) {
-        StringBuilder sb = new StringBuilder();
-        for (String id : ids.split("\\s+")) {
-            id = id.trim();
-            if (id.isEmpty()) continue;
-            try {
-                Locator el = page.locator("#" + id).first();
-                if (el != null && el.count() > 0) {
-                    String t = trimmed(el.textContent());
-                    if (!isEmpty(t)) {
-                        if (sb.length() > 0) sb.append(" ");
-                        sb.append(t);
-                    }
-                }
-            } catch (Exception ignore) {}
-        }
-        return sb.toString();
+        return LabelResolver.textByIds(page, ids);
     }
 
     private String radioChoiceText(Locator radio) {
@@ -464,21 +450,7 @@ public class FormCrawler extends AbstractJobCrawler {
     private String safeEval(Locator el, String js) { try { Object r = el.evaluate(js); return r == null ? "" : String.valueOf(r); } catch (Exception e) { return ""; } }
     private String chooseKey(String name, String id) { return !isEmpty(name) ? name : (!isEmpty(id) ? id : ""); }
     private String bestLabel(Locator el, String id) {
-        try {
-            if (!isEmpty(id)) {
-                Locator lab = el.page().locator("label[for='" + id + "']").first();
-                if (lab != null && lab.count() > 0) {
-                    String t = nz(lab.textContent()).trim();
-                    if (!t.isEmpty()) return t;
-                }
-            }
-            Locator nearest = el.locator("xpath=./preceding::label[1]");
-            if (nearest != null && nearest.count() > 0) {
-                String t = nz(nearest.first().textContent()).trim();
-                if (!t.isEmpty()) return t;
-            }
-        } catch (Exception ignore) {}
-        return "";
+        return LabelResolver.findLabel(el, id);
     }
 
     private String humanize(String s) {

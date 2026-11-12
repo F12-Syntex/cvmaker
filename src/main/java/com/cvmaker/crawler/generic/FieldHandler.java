@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import com.cvmaker.crawler.FormField;
+import com.cvmaker.crawler.LabelResolver;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 
@@ -99,11 +100,13 @@ public class FieldHandler {
         }
 
         Page target = field.getElement().page() != null ? field.getElement().page() : page;
-        Locator radios = target.locator("input[type='radio'][name='" + name + "']");
+        Locator radios = target.locator(LabelResolver.radioGroupSelector(name));
         int count = radios.count();
         List<Option> options = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            options.add(new Option(null, radios.nth(i).getAttribute("value")));
+            Locator radio = radios.nth(i);
+            String label = LabelResolver.labelForId(target, radio.getAttribute("id"));
+            options.add(new Option(label, radio.getAttribute("value")));
         }
 
         int index = findOptionIndex(options, value);

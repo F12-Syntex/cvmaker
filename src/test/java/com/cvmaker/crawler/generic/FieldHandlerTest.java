@@ -12,6 +12,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import com.cvmaker.crawler.FormField;
+import com.cvmaker.crawler.LabelResolver;
 import com.cvmaker.crawler.generic.FieldHandler.Option;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
@@ -113,7 +114,7 @@ class FieldHandlerTest {
         Locator yes = option(null, "yes");
         Locator no = option(null, "no");
         Locator radios = list(yes, no);
-        when(page.locator("input[type='radio'][name='sponsor']")).thenReturn(radios);
+        when(page.locator(LabelResolver.radioGroupSelector("sponsor"))).thenReturn(radios);
 
         assertThat(handler.fill(f, "perhaps")).isFalse();
         verify(yes, never()).check();
@@ -128,11 +129,33 @@ class FieldHandlerTest {
         Locator no = option(null, "no");
         when(no.isChecked()).thenReturn(true);
         Locator radios = list(yes, no);
-        when(page.locator("input[type='radio'][name='sponsor']")).thenReturn(radios);
+        when(page.locator(LabelResolver.radioGroupSelector("sponsor"))).thenReturn(radios);
 
         assertThat(handler.fill(f, "No")).isTrue();
         verify(no).check();
         verify(yes, never()).check();
+    }
+
+    @Test
+    void radioMatchesOnItsLabelTextWhenTheValueIsOpaque() {
+        Locator radio = mock(Locator.class);
+        FormField f = field(radio, "INPUT", "radio", "ctl00$Main$Sponsor");
+        Locator first = option(null, "1");
+        when(first.getAttribute("id")).thenReturn("ctl00$Main$Sponsor_0");
+        Locator second = option(null, "2");
+        when(second.getAttribute("id")).thenReturn("ctl00$Main$Sponsor_1");
+        when(second.isChecked()).thenReturn(true);
+        Locator label = mock(Locator.class);
+        when(label.count()).thenReturn(1);
+        when(label.first()).thenReturn(label);
+        when(label.textContent()).thenReturn("  No,\n I do not ");
+        when(page.locator(LabelResolver.labelForSelector("ctl00$Main$Sponsor_1"))).thenReturn(label);
+        Locator group = list(first, second);
+        when(page.locator(LabelResolver.radioGroupSelector("ctl00$Main$Sponsor"))).thenReturn(group);
+
+        assertThat(handler.fill(f, "No, I do not")).isTrue();
+        verify(second).check();
+        verify(first, never()).check();
     }
 
     @Test

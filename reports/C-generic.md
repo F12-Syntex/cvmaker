@@ -41,5 +41,43 @@ not touched. No constructor of `FormAnalyzer`, `FormFiller` or `FieldHandler` wa
 - `mvn -q test` passes.
 
 **Left / not done**
-- Radios match on the value attribute only; matching on the choice's label text is added in item 25.
+- Radios matched on the value attribute only in this commit; item 25 adds matching on the label.
 - Kinds such as `date`, `search` and `file` are reported as unfilled rather than handled.
+
+## Item 25: Label lookup is copied three times and builds selectors that break
+
+**What was wrong**
+- `label[for='" + id + "']` was concatenated in `FormField`, `FieldExtractor` and `FormCrawler`,
+  `FormCrawler.joinedTextByIds` used `"#" + id`, and `FieldHandler` concatenated the radio `name`.
+  All break on ids/names with quotes, `$`, `:` or a leading digit (ASP.NET ids), so the label was
+  lost or the radio group not found. The "nearest preceding label" heuristic was copied too.
+
+**What changed**
+- New `J/crawler/LabelResolver.java` (placed in `com.cvmaker.crawler` because it serves the
+  `crawler`, `crawler.generic` and `crawler.form` packages):
+  - pure `cssString` (CSSOM "serialize a string": quotes, escapes `"` and `\`, hex-escapes control
+    characters, NUL to U+FFFD), `attributeSelector`, `labelForSelector`, `idSelector`
+    (`[id="..."]` instead of `#id`), `radioGroupSelector`;
+  - `findLabel(field)` / `findLabel(field, id)`: `<label for=id>` first, then the nearest preceding
+    `<label>`; returns the text with whitespace collapsed, or "". `labelForId(page, id)` and
+    `textByIds(page, ids)` (for `aria-labelledby`).
+- `FormField.findAssociatedLabel`, `FieldExtractor.findAssociatedLabel`, `FormCrawler.bestLabel`
+  and `FormCrawler.joinedTextByIds` now delegate to it. `FormField.getLabel()` still returns null
+  when there is no label; `FieldExtractor` still returns "". Labels are now trimmed and
+  whitespace-collapsed everywhere (before, only `FormCrawler` trimmed).
+- `FieldHandler` builds the radio-group selector with `radioGroupSelector` and also matches a radio
+  choice on its `<label for>` text, so opaque values ("1", "2") can still be chosen by label.
+
+**How verified**
+- `src/test/java/com/cvmaker/crawler/LabelResolverTest.java`: table of `cssString` cases (plain,
+  `$`, `:`, `'`, `"`, `\`, empty, newline, NUL, null), selector builders, `findLabel` for an id
+  `ctl00$Main$it's` through `LabelResolver`, `FormField` and `FieldExtractor`, the preceding-label
+  fallback, no label / no page, and `textByIds`. With the old code the `FormField` label for that
+  id is null (the broken selector finds nothing), so that test fails before the fix.
+- `FieldHandlerTest` gains a radio-by-label test with ASP.NET-style names.
+- `mvn -q test` passes.
+
+**Left / not done**
+- `FormCrawler.radioChoiceText` still uses the preceding-label fallback for each radio choice, as
+  before, which can return the question rather than the choice on some layouts.
+- Other selectors in `FormCrawler` (`xpath=ancestor::...`) are fixed strings and were not touched.

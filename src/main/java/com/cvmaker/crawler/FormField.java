@@ -84,23 +84,8 @@ public class FormField {
     }
 
     private String findAssociatedLabel() {
-        try {
-            if (id != null && !id.isEmpty()) {
-                Locator label = element.page().locator("label[for='" + id + "']");
-                if (label.count() > 0) {
-                    return label.first().textContent();
-                }
-            }
-            
-            // Try finding nearest label
-            Locator nearestLabel = element.locator("xpath=./preceding::label[1]");
-            if (nearestLabel.count() > 0) {
-                return nearestLabel.first().textContent();
-            }
-        } catch (Exception e) {
-            // Continue without label
-        }
-        return null;
+        String label = LabelResolver.findLabel(element, id);
+        return label.isEmpty() ? null : label;
     }
 
     // Getters and Setters
