@@ -1,7 +1,12 @@
 package com.cvmaker.application.management;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.List;
+import java.util.Locale;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -45,14 +50,61 @@ public class JobApplicationData {
     public JobApplicationData() {
     }
 
+    /**
+     * @param date the email's RFC 2822 {@code Date} header; it also sets {@link #getEmailTimestamp()}
+     *             (in the system time zone). Only when it cannot be parsed does the timestamp fall
+     *             back to the processing time.
+     */
     public JobApplicationData(String emailId, String subject, String fromEmail, String date) {
         this.emailId = emailId;
         this.subject = subject;
         this.fromEmail = fromEmail;
         this.date = date;
-        this.processedTimestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        this.emailTimestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        String now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        this.processedTimestamp = now;
+        String sent = parseEmailTimestamp(date, ZoneId.systemDefault());
+        this.emailTimestamp = sent != null ? sent : now;
         this.emailLink = generateGmailLink(emailId);
+    }
+
+    /** RFC 2822 date with a named zone ({@code UTC}, {@code EST}, ...), which RFC 1123 parsing rejects. */
+    private static final DateTimeFormatter NAMED_ZONE_DATE = DateTimeFormatter
+            .ofPattern("[EEE, ]d MMM yyyy HH:mm[:ss] z", Locale.ENGLISH);
+
+    private static final List<DateTimeFormatter> EMAIL_DATE_FORMATS = List.of(
+            DateTimeFormatter.RFC_1123_DATE_TIME, NAMED_ZONE_DATE);
+
+    /**
+     * Converts an email {@code Date} header (RFC 2822, e.g. {@code Tue, 3 Jun 2025 11:05:30 +0200
+     * (CEST)}) to an ISO local date-time in {@code zone}, the format {@code emailTimestamp} uses.
+     * Comments in parentheses, extra spaces, a missing or wrong weekday and named zones such as
+     * {@code UT}, {@code UTC}, {@code GMT} or {@code EST} are tolerated.
+     *
+     * @return e.g. {@code 2025-06-03T09:05:30} for zone UTC, or {@code null} when it cannot be parsed
+     */
+    public static String parseEmailTimestamp(String dateHeader, ZoneId zone) {
+        if (dateHeader == null || dateHeader.isBlank()) {
+            return null;
+        }
+        String cleaned = dateHeader.replaceAll("\\([^)]*\\)", " ").replaceAll("\\s+", " ").trim();
+        if (cleaned.endsWith(" UT")) {
+            cleaned = cleaned + "C";
+        }
+        // Retry without the weekday: some senders put a weekday that does not match the date
+        String withoutWeekday = cleaned.replaceFirst("^[A-Za-z]{3},\\s*", "");
+        for (String candidate : List.of(cleaned, withoutWeekday)) {
+            for (DateTimeFormatter format : EMAIL_DATE_FORMATS) {
+                try {
+                    return ZonedDateTime.parse(candidate, format)
+                            .withZoneSameInstant(zone)
+                            .toLocalDateTime()
+                            .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                } catch (DateTimeParseException e) {
+                    // try the next format
+                }
+            }
+        }
+        return null;
     }
 
     private String generateGmailLink(String emailId) {

@@ -83,3 +83,28 @@ partial line; CSV formula neutralising, quoting, UTF-8, `Locale.GERMANY` default
 **Left.** A record split by a newline in fields 13 to 15 (timestamps, URL, email link) cannot be
 told apart from two records; such newlines should not occur. JSON keys are the Java field names;
 renaming a field needs a reader alias.
+
+## Item 17: emailTimestamp recorded processing time, not email time
+
+**What was wrong.** The `JobApplicationData(emailId, subject, from, date)` constructor set
+`emailTimestamp = now()`. `GoogleSheetsService.isNewerApplication` uses that field to pick the
+latest status per company, and emails are processed in `HashSet` order, so "latest" was random.
+
+**What changed.**
+- New `JobApplicationData.parseEmailTimestamp(String dateHeader, ZoneId zone)`: parses the RFC
+  2822 `Date` header (strips `(comments)`, collapses spaces, retries without a mismatched weekday,
+  accepts numeric offsets and `GMT`/`UT`/`UTC`/named zones) and returns ISO local date-time in the
+  given zone, or `null`.
+- The constructor sets `emailTimestamp` from the header, in the system time zone (same format and
+  zone as before, so `LocalDateTime.parse` in `GoogleSheetsService` and existing stored values stay
+  compatible). Only an unparseable header falls back to the processing time.
+- `GmailService.getEmailContent` passes the header through `effectiveDate(header, internalDate)`:
+  when the header is missing or unparseable, Gmail's `internalDate` is used, formatted as RFC 1123
+  in UTC, so the constructor still gets a real email time.
+
+**Verified by.** `JobApplicationDataTest` (offsets, comments, missing seconds, wrong weekday, named
+zones, zone conversion, null/garbage, constructor uses email time and orders across offsets) and
+`GmailServiceTest` (`effectiveDate` fallbacks). The constructor test fails before the fix.
+
+**Left.** Records already stored keep their old (processing-time) `emailTimestamp`; they are not
+re-derived from `date` on load, because the stored value may have been edited in the sheet.

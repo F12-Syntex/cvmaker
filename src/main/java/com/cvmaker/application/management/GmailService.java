@@ -3,6 +3,9 @@ package com.cvmaker.application.management;
 import java.io.File;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
@@ -154,8 +157,23 @@ public class GmailService {
             }
         }
 
+        date = effectiveDate(date, fullMessage.getInternalDate());
         String body = getMessageBody(fullMessage.getPayload());
         return new EmailData(messageId, subject, from, date, body);
+    }
+
+    /**
+     * The {@code Date} header when it can be parsed, otherwise Gmail's {@code internalDate} (epoch
+     * millis, when the message was received) as an RFC 1123 date in UTC. The result feeds
+     * {@link JobApplicationData#getEmailTimestamp()}, which decides the latest status per company.
+     */
+    static String effectiveDate(String dateHeader, Long internalDateMillis) {
+        if (internalDateMillis == null
+                || JobApplicationData.parseEmailTimestamp(dateHeader, ZoneOffset.UTC) != null) {
+            return dateHeader;
+        }
+        return DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                Instant.ofEpochMilli(internalDateMillis).atZone(ZoneOffset.UTC));
     }
 
     private String getMessageBody(MessagePart part) {
