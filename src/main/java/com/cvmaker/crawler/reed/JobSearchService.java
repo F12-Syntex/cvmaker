@@ -178,29 +178,18 @@ public class JobSearchService {
 
     private JobInfo extractJobInfo(Locator jobCard, int index) {
         JobInfo job = new JobInfo();
-
-        try {
-            // Correct selector for title
-            Locator titleEl = jobCard.locator("a[data-qa='job-card-title']").first();
-            if (titleEl != null && titleEl.count() > 0) {
-                job.setTitle(titleEl.textContent().trim());
-            } else {
-                job.setTitle("Job " + index);
-            }
-
-            // Company selector (likely still works, but adding fallback)
-            Locator companyEl = jobCard.locator("[data-qa='job-company-name']").first();
-            if (companyEl != null && companyEl.count() > 0) {
-                job.setCompany(companyEl.textContent().trim());
-            } else {
-                job.setCompany("Unknown Company");
-            }
-
-        } catch (Exception e) {
-            job.setTitle("Job " + index);
-            job.setCompany("Unknown Company");
-        }
-
+        // Title and company are read independently, so a failure on one keeps the other.
+        job.setTitle(ReedText.cardField(textOf(jobCard, "a[data-qa='job-card-title']"), "Job " + index));
+        job.setCompany(ReedText.cardField(textOf(jobCard, "[data-qa='job-company-name']"), "Unknown Company"));
         return job;
+    }
+
+    private static String textOf(Locator scope, String selector) {
+        try {
+            Locator element = scope.locator(selector).first();
+            return element.count() > 0 ? element.textContent() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

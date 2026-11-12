@@ -51,6 +51,21 @@ final class ReedText {
     }
 
     /**
+     * Clean a short field read from a job card (title, company).
+     *
+     * @param raw      the element's text content, may be null
+     * @param fallback the value to use when the text is null or blank
+     * @return the text on one line with whitespace collapsed, or the fallback
+     */
+    static String cardField(String raw, String fallback) {
+        if (raw == null) {
+            return fallback;
+        }
+        String cleaned = normaliseWhitespace(raw);
+        return cleaned.isEmpty() ? fallback : cleaned;
+    }
+
+    /**
      * Collapse every run of whitespace (including non-breaking spaces and line breaks, which
      * {@code textContent()} keeps from the markup) into one space, and trim the ends.
      *

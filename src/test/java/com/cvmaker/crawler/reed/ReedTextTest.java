@@ -58,6 +58,19 @@ class ReedTextTest {
     }
 
     @Test
+    void cardFieldFallsBackForNullOrBlankText() {
+        assertThat(ReedText.cardField(null, "Job 3")).isEqualTo("Job 3");
+        assertThat(ReedText.cardField("  \n ", "Unknown Company")).isEqualTo("Unknown Company");
+    }
+
+    @Test
+    void cardFieldCollapsesWhitespaceInsideTheValue() {
+        assertThat(ReedText.cardField("\n  Senior Java\n   Developer  ", "x"))
+                .isEqualTo("Senior Java Developer");
+        assertThat(ReedText.cardField("Acme Ltd", "x")).isEqualTo("Acme Ltd");
+    }
+
+    @Test
     void toleratesExtraWhitespaceBetweenWords() {
         assertThat(ReedText.mentionsEasyApply("Easy\n   Apply")).isTrue();
         assertThat(ReedText.mentionsEasyApply("Quick Apply")).isTrue();
