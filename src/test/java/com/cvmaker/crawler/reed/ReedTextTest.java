@@ -35,6 +35,29 @@ class ReedTextTest {
     }
 
     @Test
+    void usableDescriptionRejectsNullBlankAndShortText() {
+        assertThat(ReedText.usableDescription(null, 0)).isNull();
+        assertThat(ReedText.usableDescription("   \n\t ", 0)).isNull();
+        assertThat(ReedText.usableDescription("short", 50)).isNull();
+    }
+
+    @Test
+    void usableDescriptionTrimsAndKeepsLineStructure() {
+        String text = "  Role overview\n\nWe need a Java developer.  ";
+        assertThat(ReedText.usableDescription(text, 0))
+                .isEqualTo("Role overview\n\nWe need a Java developer.");
+    }
+
+    @Test
+    void usableDescriptionMeasuresLengthAfterTrimming() {
+        String padded = " ".repeat(60) + "tiny" + " ".repeat(60);
+        assertThat(ReedText.usableDescription(padded, 50)).isNull();
+        String exactlyFiftyOne = "x".repeat(51);
+        assertThat(ReedText.usableDescription(exactlyFiftyOne, 50)).isEqualTo(exactlyFiftyOne);
+        assertThat(ReedText.usableDescription("x".repeat(50), 50)).isNull();
+    }
+
+    @Test
     void toleratesExtraWhitespaceBetweenWords() {
         assertThat(ReedText.mentionsEasyApply("Easy\n   Apply")).isTrue();
         assertThat(ReedText.mentionsEasyApply("Quick Apply")).isTrue();

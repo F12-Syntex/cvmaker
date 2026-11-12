@@ -28,6 +28,9 @@ public class JobDescriptionExtractor {
         "[data-testid*='description']"
     };
 
+    // A backup selector's text must be longer than this to count as a description
+    private static final int MIN_FALLBACK_LENGTH = 50;
+
     public JobDescriptionExtractor(Page page, CrawlerConfig config) {
         this.page = page;
         this.config = config;
@@ -40,20 +43,24 @@ public class JobDescriptionExtractor {
         StringBuilder description = new StringBuilder();
 
         try {
-            // 1. Try the modern Reed selector
+            // 1. Try the modern Reed selector. An empty element (still rendering, or a placeholder)
+            // falls through to the other selectors instead of returning "null" or a blank line.
             Locator primary = page.locator(PRIMARY_SELECTOR).first();
             if (primary != null && primary.isVisible()) {
-                description.append(primary.textContent()).append("\n");
-                return description.toString();
+                String text = ReedText.usableDescription(primary.textContent(), 0);
+                if (text != null) {
+                    description.append(text).append("\n");
+                    return description.toString();
+                }
             }
 
             // 2. Try common description selectors
             for (String selector : COMMON_DESC_SELECTORS) {
                 Locator element = page.locator(selector).first();
                 if (element != null && element.isVisible()) {
-                    String text = element.textContent();
-                    if (text != null && text.trim().length() > 50) {
-                        description.append(text.trim()).append("\n");
+                    String text = ReedText.usableDescription(element.textContent(), MIN_FALLBACK_LENGTH);
+                    if (text != null) {
+                        description.append(text).append("\n");
                         return description.toString();
                     }
                 }

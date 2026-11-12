@@ -33,6 +33,24 @@ final class ReedText {
     }
 
     /**
+     * Decide whether text taken from a description element is worth using.
+     *
+     * @param raw       the element's text content, may be null
+     * @param minLength the trimmed text must be longer than this many characters
+     * @return the trimmed text, or null if it is null, blank or too short
+     */
+    static String usableDescription(String raw, int minLength) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.strip();
+        if (trimmed.isEmpty() || trimmed.length() <= minLength) {
+            return null;
+        }
+        return trimmed;
+    }
+
+    /**
      * Collapse every run of whitespace (including non-breaking spaces and line breaks, which
      * {@code textContent()} keeps from the markup) into one space, and trim the ends.
      *
