@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const applyStatus = document.getElementById('applyStatus');
   
   const apiKeyInput = document.getElementById('apiKey');
+  const modelInput = document.getElementById('model');
   const userDataInput = document.getElementById('userData');
   const jobTitleInput = document.getElementById('jobTitle');
   const locationInput = document.getElementById('location');
@@ -49,10 +50,11 @@ document.addEventListener('DOMContentLoaded', function() {
   let searchInProgress = false;
 
   // Load saved configuration
-  chrome.storage.local.get(['openaiApiKey', 'userData', 'jobSearchSettings'], function(result) {
+  chrome.storage.local.get(['openaiApiKey', 'openaiModel', 'userData', 'jobSearchSettings'], function(result) {
     if (result.openaiApiKey) {
       apiKeyInput.value = result.openaiApiKey;
     }
+    modelInput.value = result.openaiModel || AutoApplyLib.DEFAULT_MODEL;
     if (result.userData) {
       userDataInput.value = result.userData;
     }
@@ -134,7 +136,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const timestamp = new Date().toLocaleTimeString();
     const logEntry = document.createElement('div');
     logEntry.className = 'log-entry';
-    logEntry.innerHTML = `<span class="log-timestamp">[${timestamp}]</span> ${message}`;
+    // textContent only: messages can contain page text and error strings.
+    const stamp = document.createElement('span');
+    stamp.className = 'log-timestamp';
+    stamp.textContent = `[${timestamp}]`;
+    logEntry.appendChild(stamp);
+    logEntry.appendChild(document.createTextNode(` ${message}`));
     searchLogs.appendChild(logEntry);
     searchLogs.scrollTop = searchLogs.scrollHeight;
   }
@@ -155,6 +162,13 @@ document.addEventListener('DOMContentLoaded', function() {
       configStatus.className = 'status error';
       return;
     }
+
+    const model = modelInput.value.trim() || AutoApplyLib.DEFAULT_MODEL;
+    if (AutoApplyLib.normalizeModel(model) !== model) {
+      configStatus.textContent = '❌ Please enter a valid model name, for example gpt-4.1-mini';
+      configStatus.className = 'status error';
+      return;
+    }
     
     setLoading(saveBtn, true, '💾 Saving configuration...', configStatus);
     
@@ -167,6 +181,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     chrome.storage.local.set({
       openaiApiKey: apiKey,
+      openaiModel: model,
       userData: userData,
       jobSearchSettings: jobSearchSettings
     }, function() {
@@ -206,157 +221,172 @@ document.addEventListener('DOMContentLoaded', function() {
     startJobSearch(jobTitle, location, experienceLevel, maxPages);
   });
 
-  function startJobSearch(jobTitle, location, experienceLevel, maxPages) {
+  // Shows the running state. The button stays enabled so it can be used as Stop.
+  function showSearchRunning() {
     searchInProgress = true;
     searchBtn.querySelector('.button-text').textContent = '⏹️ Stop Search';
     searchBtn.classList.remove('success-btn');
     searchBtn.classList.add('danger-btn');
-    
-    setLoading(searchBtn, true, '🔍 Opening LinkedIn and starting search...', searchStatus);
+    searchSpinner.style.display = 'inline-block';
+    searchBtn.disabled = false;
     searchProgress.style.display = 'block';
     jobStats.style.display = 'grid';
     searchLogs.style.display = 'block';
-    
+  }
+
+  function showSearchIdle() {
+    searchInProgress = false;
+    searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
+    searchBtn.classList.remove('danger-btn');
+    searchBtn.classList.add('success-btn');
+    setLoading(searchBtn, false);
+    currentSearchTabId = null;
+  }
+
+  // The background owns the search: it opens LinkedIn and starts scraping once the tab has
+  // loaded, so closing this popup does not stop or break it.
+  function startJobSearch(jobTitle, location, experienceLevel, maxPages) {
+    showSearchRunning();
+    searchStatus.textContent = '🔍 Opening LinkedIn and starting search...';
+    searchStatus.className = 'status info';
+    searchStatus.style.display = 'block';
+
     // Reset counters
     jobsFound.textContent = '0';
     pagesScraped.textContent = '0';
-    searchLogs.innerHTML = '';
+    searchLogs.textContent = '';
     progressFill.style.width = '0%';
-    
+
     addLog('🚀 Starting job search...');
     addLog(`🎯 Searching for: ${jobTitle} ${location ? `in ${location}` : ''}`);
-    
-    // Open LinkedIn search
+
     chrome.runtime.sendMessage({
-      action: "openLinkedInSearch",
+      action: "startJobSearch",
+      maxPages: maxPages,
       params: {
         jobTitle: jobTitle,
         location: location,
         experienceLevel: experienceLevel
       }
     }, function(response) {
-      if (response && response.success) {
-        currentSearchTabId = response.tabId;
-        addLog('🌐 LinkedIn opened, waiting for page load...');
-        
-        // Start scraping after a delay
-        setTimeout(() => {
-          chrome.runtime.sendMessage({
-            action: "startJobScraping",
-            maxPages: maxPages,
-            jobTitle: jobTitle,
-            location: location
-          });
-        }, 5000);
-      } else {
-        addLog('❌ Failed to open LinkedIn');
-        stopJobSearch();
+      if (chrome.runtime.lastError || !response || !response.success) {
+        const reason = chrome.runtime.lastError ? chrome.runtime.lastError.message : (response && response.error) || 'unknown error';
+        addLog(`❌ Failed to open LinkedIn: ${reason}`);
+        showSearchIdle();
+        return;
       }
+      currentSearchTabId = response.tabId;
+      addLog('🌐 LinkedIn opened; scraping starts when the page has loaded. You can close this popup.');
     });
   }
 
   function stopJobSearch() {
-    searchInProgress = false;
-    searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
-    searchBtn.classList.remove('danger-btn');
-    searchBtn.classList.add('success-btn');
-    setLoading(searchBtn, false);
-    
-    if (currentSearchTabId) {
-      // Optionally close the search tab
-      // chrome.tabs.remove(currentSearchTabId);
-      currentSearchTabId = null;
-    }
-    
+    chrome.runtime.sendMessage({ action: "stopJobSearch" }, function() {
+      if (chrome.runtime.lastError) {
+        addLog(`❌ ${chrome.runtime.lastError.message}`);
+      }
+    });
+    showSearchIdle();
     addLog('⏹️ Search stopped by user');
   }
 
-  // Fill current form
-  fillBtn.addEventListener('click', function() {
-    const apiKey = apiKeyInput.value.trim();
-    const userData = userDataInput.value.trim();
-    
-    setLoading(fillBtn, true, '🤖 AI is analyzing and filling the form...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (!tabs[0]) {
-        setLoading(fillBtn, false);
-        applyStatus.textContent = '❌ Unable to access current tab';
-        applyStatus.className = 'status error';
-        return;
-      }
-      
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "fillFormWithAI",
-        apiKey: apiKey,
-        userData: userData
-      }, function(response) {
-        setLoading(fillBtn, false);
-        
-        if (chrome.runtime.lastError) {
-          applyStatus.textContent = '❌ Cannot access this page. Try refreshing and reopening the extension.';
-          applyStatus.className = 'status error';
-          return;
-        }
-        
-        if (response && response.success) {
-          if (response.fieldsCount > 0) {
-            applyStatus.textContent = `🎉 Success! AI filled ${response.fieldsCount} fields intelligently`;
-            applyStatus.className = 'status success';
-          } else {
-            applyStatus.textContent = '📄 No fillable form fields found on this page';
-            applyStatus.className = 'status info';
-          }
-        } else {
-          const errorMsg = response?.error || 'Unknown error occurred';
-          applyStatus.textContent = `❌ Error: ${errorMsg}`;
-          applyStatus.className = 'status error';
-        }
+  // A search may still be running from an earlier time the popup was open.
+  chrome.runtime.sendMessage({ action: "getJobSearchState" }, function(response) {
+    if (chrome.runtime.lastError) return;
+    if (response && response.success && response.search) {
+      currentSearchTabId = response.search.tabId;
+      showSearchRunning();
+      addLog(`🔄 Search for "${response.search.jobTitle}" is running in another tab`);
+    }
+  });
+
+  function showApplyStatus(message, kind) {
+    applyStatus.textContent = message;
+    applyStatus.className = `status ${kind}`;
+  }
+
+  // Injects the content script into the active tab (allowed by activeTab, which opening the
+  // popup grants) and sends it one message. The message never carries the API key or the
+  // profile: the content script asks the background for each AI answer.
+  async function sendToActiveTab(message) {
+    let tabs;
+    try {
+      tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    } catch (error) {
+      tabs = null;
+    }
+    if (!tabs || !tabs[0]) throw new Error('❌ Unable to access current tab');
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabs[0].id },
+        files: AutoApplyLib.CONTENT_SCRIPT_FILES
       });
-    });
+      return await chrome.tabs.sendMessage(tabs[0].id, message);
+    } catch (error) {
+      // chrome:// pages, the Web Store and PDF viewers cannot be scripted.
+      throw new Error('❌ Cannot access this page. Try refreshing and reopening the extension.');
+    }
+  }
+
+  // Fill current form
+  fillBtn.addEventListener('click', async function() {
+    setLoading(fillBtn, true, '🤖 AI is analyzing and filling the form...', applyStatus);
+    try {
+      const response = await sendToActiveTab({ action: "fillFormWithAI" });
+      if (response && response.success) {
+        if (response.fieldsCount > 0) {
+          showApplyStatus(`🎉 Success! AI filled ${response.fieldsCount} fields intelligently`, 'success');
+        } else if (response.errors && response.errors.length > 0) {
+          showApplyStatus(`❌ ${response.errors[0]}`, 'error');
+        } else {
+          showApplyStatus('📄 No fillable form fields found on this page', 'info');
+        }
+      } else {
+        showApplyStatus(`❌ Error: ${(response && response.error) || 'Unknown error occurred'}`, 'error');
+      }
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(fillBtn, false);
+    }
   });
 
   // Clear form
-  clearBtn.addEventListener('click', function() {
+  clearBtn.addEventListener('click', async function() {
     setLoading(clearBtn, true, '🗑️ Clearing all form fields...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {action: "clearForm"}, function(response) {
-        setLoading(clearBtn, false);
-        
-        if (response && response.success) {
-          if (response.fieldsCount > 0) {
-            applyStatus.textContent = `✅ Cleared ${response.fieldsCount} fields`;
-            applyStatus.className = 'status success';
-          } else {
-            applyStatus.textContent = '📄 No form fields found to clear';
-            applyStatus.className = 'status info';
-          }
+    try {
+      const response = await sendToActiveTab({ action: "clearForm" });
+      if (response && response.success) {
+        if (response.fieldsCount > 0) {
+          showApplyStatus(`✅ Cleared ${response.fieldsCount} fields`, 'success');
         } else {
-          applyStatus.textContent = '❌ Failed to clear form';
-          applyStatus.className = 'status error';
+          showApplyStatus('📄 No form fields found to clear', 'info');
         }
-      });
-    });
+      } else {
+        showApplyStatus('❌ Failed to clear form', 'error');
+      }
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(clearBtn, false);
+    }
   });
 
   // Analyze form
-  analyzeBtn.addEventListener('click', function() {
+  analyzeBtn.addEventListener('click', async function() {
     setLoading(analyzeBtn, true, '📊 Analyzing current page structure...', applyStatus);
-    
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, {action: "analyzePage"}, function(response) {
-        setLoading(analyzeBtn, false);
-        
-        if (response && response.success) {
-          applyStatus.textContent = `📊 Found ${response.inputFields} input fields, ${response.forms} forms, ${response.buttons} buttons`;
-          applyStatus.className = 'status info';
-        } else {
-          applyStatus.textContent = '❌ Could not analyze page';
-          applyStatus.className = 'status error';
-        }
-      });
-    });
+    try {
+      const response = await sendToActiveTab({ action: "analyzePage" });
+      if (response && response.success) {
+        showApplyStatus(`📊 Found ${response.inputFields} input fields, ${response.forms} forms, ${response.buttons} buttons`, 'info');
+      } else {
+        showApplyStatus('❌ Could not analyze page', 'error');
+      }
+    } catch (error) {
+      showApplyStatus(error.message, 'error');
+    } finally {
+      setLoading(analyzeBtn, false);
+    }
   });
 
   // Listen for messages from background script and content script
@@ -369,24 +399,21 @@ document.addEventListener('DOMContentLoaded', function() {
       
       addLog(`📄 Scraped page ${request.currentPage}/${request.totalPages} - Found ${request.jobsFound} jobs total`);
     } else if (request.action === "jobSearchComplete") {
-      searchInProgress = false;
-      searchBtn.querySelector('.button-text').textContent = '🔍 Search LinkedIn Jobs';
-      searchBtn.classList.remove('danger-btn');
-      searchBtn.classList.add('success-btn');
-      setLoading(searchBtn, false);
+      showSearchIdle();
       progressFill.style.width = '100%';
-      
+      searchStatus.style.display = 'block';
+
       if (request.success) {
-        searchStatus.textContent = `🎉 Search complete! Found ${request.totalJobs} jobs and saved to downloads`;
+        const saved = request.totalJobs > 0 ? ' and saved to downloads' : '';
+        const verb = request.stopped ? 'Search stopped.' : 'Search complete!';
+        searchStatus.textContent = `🎉 ${verb} Found ${request.totalJobs} jobs${saved}`;
         searchStatus.className = 'status success';
-        addLog(`✅ Search completed successfully! ${request.totalJobs} jobs saved to file`);
+        addLog(`✅ ${verb} ${request.totalJobs} jobs${saved}`);
       } else {
         searchStatus.textContent = `❌ Search failed: ${request.error}`;
         searchStatus.className = 'status error';
         addLog(`❌ Search failed: ${request.error}`);
       }
-      
-      currentSearchTabId = null;
     } else if (request.action === "linkedinLoaded") {
       addLog('✅ LinkedIn page loaded, starting job extraction...');
     }
@@ -409,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   document.getElementById('fillElementBtn').addEventListener('click', () => {
-    applyStatus.textContent = '👆 Right-click on any form element and select "AI Fill Fields" from the context menu';
+    applyStatus.textContent = '👆 Right-click a form field and select "AI Fill This Field" from the context menu';
     applyStatus.className = 'status info';
   });
 });

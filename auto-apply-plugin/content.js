@@ -1,7 +1,18 @@
+// Content script. It is not declared in the manifest: the background or the popup injects it
+// (after lib/fields.js) into the tab the user acted on, or into the LinkedIn search tab.
+// It never sees the OpenAI API key or the user's profile. It describes each field to the
+// background, which builds the prompt, calls OpenAI and returns only the text for that field.
+//
+// The body is wrapped so that injecting it twice into the same page is harmless: the second
+// copy returns at once and the first copy keeps handling messages.
+(function () {
+if (globalThis.__autoApplyContentScriptLoaded) return;
+globalThis.__autoApplyContentScriptLoaded = true;
+
 // Store the last right-clicked element
 let lastClickedElement = null;
-let clickCoordinates = { x: 0, y: 0 };
 let isSearching = false;
+let stopRequested = false;
 let searchData = {
   jobs: [],
   currentPage: 1,
@@ -13,7 +24,6 @@ let searchData = {
 // Track right-click events to store the clicked element
 document.addEventListener('contextmenu', function (event) {
     lastClickedElement = event.target;
-    clickCoordinates = { x: event.pageX, y: event.pageY };
 
     // Add visual indicator to show which element was clicked
     removeHighlight();
@@ -38,12 +48,34 @@ function removeHighlight() {
     });
 }
 
-function findElementAtCoordinates(x, y) {
-    if (x && y) {
-        const element = document.elementFromPoint(x, y);
-        if (element) return element;
+// Sends a message to the extension (background or popup). When nobody is listening, for example
+// because the popup is closed, Chrome rejects the promise; that is expected, so it is swallowed.
+function notifyExtension(message) {
+    try {
+        const pending = chrome.runtime.sendMessage(message);
+        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+    } catch (error) {
+        // The extension was reloaded and this content script is orphaned.
     }
-    return lastClickedElement;
+}
+
+// Asks the background for an AI completion. Throws with the background's error message.
+async function askBackground(message) {
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response || response.success !== true) {
+        throw new Error((response && response.error) || 'No answer from the extension');
+    }
+    return typeof response.text === 'string' ? response.text : '';
+}
+
+// The element to fill: the last right-clicked element if this script saw the click, otherwise
+// the focused form field (right-clicking a field focuses it, and this script is injected
+// only after the click).
+function resolveTargetElement() {
+    if (lastClickedElement && lastClickedElement.isConnected !== false) return lastClickedElement;
+    const active = document.activeElement;
+    if (active && active !== document.body && isInputField(active)) return active;
+    return null;
 }
 
 function findInputFieldsInElement(element) {
@@ -111,22 +143,25 @@ function isInputField(element) {
 
 // LinkedIn job scraping functionality
 async function startLinkedInScraping(maxPages, jobTitle, location) {
-    if (isSearching) return;
-    
+    if (isSearching) return { success: false, error: 'A search is already running in this tab' };
+
+    // Parameters come from a message and may be missing.
+    const params = AutoApplyLib.normalizeSearchRequest({ maxPages, params: { jobTitle, location } });
     isSearching = true;
+    stopRequested = false;
     searchData = {
         jobs: [],
         currentPage: 1,
-        maxPages: maxPages,
-        jobTitle: jobTitle,
-        location: location
+        maxPages: params.maxPages,
+        jobTitle: params.jobTitle,
+        location: params.location
     };
     
     try {
         await scrapeLinkedInJobs();
     } catch (error) {
         console.error('LinkedIn scraping error:', error);
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "jobSearchComplete",
             success: false,
             error: error.message
@@ -134,12 +169,19 @@ async function startLinkedInScraping(maxPages, jobTitle, location) {
     } finally {
         isSearching = false;
     }
+    return { success: true };
+}
+
+function stopLinkedInScraping() {
+    const wasSearching = isSearching;
+    stopRequested = true;
+    return { success: true, wasSearching };
 }
 
 async function scrapeLinkedInJobs() {
-    while (searchData.currentPage <= searchData.maxPages && isSearching) {
+    while (searchData.currentPage <= searchData.maxPages && !stopRequested) {
         // Send progress update
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "jobSearchProgress",
             currentPage: searchData.currentPage,
             totalPages: searchData.maxPages,
@@ -155,6 +197,8 @@ async function scrapeLinkedInJobs() {
         
         console.log(`Page ${searchData.currentPage}: Found ${pageJobs.length} jobs`);
         
+        if (stopRequested) break;
+
         // Check if there's a next page and navigate to it
         if (searchData.currentPage < searchData.maxPages) {
             const hasNext = await navigateToNextPage();
@@ -170,14 +214,17 @@ async function scrapeLinkedInJobs() {
         await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
-    // Create and download the file
-    const jobsText = formatJobsForFile(searchData.jobs, searchData.jobTitle, searchData.location);
-    downloadJobsFile(jobsText, searchData.jobTitle);
-    
+    // Create and download the file (after a stop, only if something was found)
+    if (!stopRequested || searchData.jobs.length > 0) {
+        const jobsText = AutoApplyLib.formatJobsForFile(searchData.jobs, searchData.jobTitle, searchData.location);
+        await downloadJobsFile(jobsText, searchData.jobTitle);
+    }
+
     // Send completion message
-    chrome.runtime.sendMessage({
+    notifyExtension({
         action: "jobSearchComplete",
         success: true,
+        stopped: stopRequested,
         totalJobs: searchData.jobs.length
     });
 }
@@ -348,63 +395,34 @@ async function navigateToNextPage() {
     return false;
 }
 
-function formatJobsForFile(jobs, searchTitle, searchLocation) {
-    const header = `# LinkedIn Job Search Results
-Search Query: ${searchTitle}${searchLocation ? ` in ${searchLocation}` : ''}
-Search Date: ${new Date().toLocaleDateString()}
-Total Jobs Found: ${jobs.length}
-Generated by: AI Auto Applier Extension
-
-================================================================================
-
-`;
-
-    const jobsText = jobs.map((job, index) => {
-        return `JOB #${index + 1}
-================================================================================
-Title: ${job.title}
-Company: ${job.company}
-Location: ${job.location}
-Posted: ${job.posted}
-Job ID: ${job.id}
-Link: ${job.link}
-
-Description:
-${job.description || 'No description available'}
-
-Scraped: ${new Date(job.scraped).toLocaleString()}
-
-================================================================================
-
-`;
-    }).join('');
-
-    return header + jobsText;
-}
-
-function downloadJobsFile(content, jobTitle) {
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const filename = `linkedin_jobs_${jobTitle.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
-    
-    // Use Chrome's downloads API through background script
-    chrome.runtime.sendMessage({
-        action: "downloadFile",
-        url: url,
-        filename: filename
-    });
+// The background builds the file name and a data URL and starts the download, so there is
+// no blob URL to leak.
+async function downloadJobsFile(content, jobTitle) {
+    try {
+        const response = await chrome.runtime.sendMessage({
+            action: "downloadJobs",
+            content: content,
+            jobTitle: jobTitle
+        });
+        if (response && response.success === false) {
+            console.error('Download failed:', response.error);
+        }
+    } catch (error) {
+        console.error('Download failed:', error);
+    }
 }
 
 // AI form filling functionality
-async function fillElementWithAI(apiKey, userData, clickX, clickY) {
+async function fillElementWithAI() {
     let fieldsCount = 0;
     let errors = [];
 
     try {
-        const targetElement = findElementAtCoordinates(clickX, clickY) || lastClickedElement;
+        // The context menu gives no usable coordinates.
+        const targetElement = resolveTargetElement();
 
-        if (!targetElement) {
-            throw new Error('Could not find target element');
+        if (!targetElement || targetElement.isConnected === false) {
+            throw new Error('Could not find target element. Right-click the form element again.');
         }
 
         highlightElement(targetElement);
@@ -430,16 +448,16 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
                 let result = null;
 
                 if (input.tagName === 'SELECT') {
-                    result = await fillSelectWithAI(apiKey, userData, input, jobContext);
+                    result = await fillSelectWithAI(input, jobContext);
                 } else {
                     const fieldInfo = detectFieldType(input);
                     console.log(`Processing field: ${fieldInfo.type} - ${fieldInfo.context.substring(0, 50)}`);
 
-                    const aiResponse = await generateAIResponse(apiKey, userData, fieldInfo, jobContext);
+                    const aiResponse = await generateAIResponse(fieldInfo, jobContext);
 
                     if (aiResponse && aiResponse.length > 0) {
                         input.focus();
-                        input.style.backgroundColor = '#e8f5e8';
+                        input.style.backgroundColor= '#e8f5e8';
                         input.value = aiResponse;
 
                         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -472,7 +490,7 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
             ? `✅ Successfully filled ${fieldsCount} fields in selected element`
             : '⚠️ No fields were filled';
 
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "showNotification",
             message: message
         });
@@ -483,7 +501,7 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
         console.error('Element filling failed:', error);
         removeHighlight();
 
-        chrome.runtime.sendMessage({
+        notifyExtension({
             action: "showNotification",
             message: `❌ Error: ${error.message}`
         });
@@ -492,49 +510,43 @@ async function fillElementWithAI(apiKey, userData, clickX, clickY) {
     }
 }
 
-async function fillSelectWithAI(apiKey, userData, element, jobContext) {
+// Only native <select> elements are handled here. Custom comboboxes are text inputs and are
+// filled as text by the callers.
+async function fillSelectWithAI(element, jobContext) {
     if (element.tagName === 'SELECT') {
-        return await fillNativeSelectWithAI(apiKey, userData, element, jobContext);
+        return await fillNativeSelectWithAI(element, jobContext);
     }
-
-    if (element.role === 'combobox' || element.classList.contains('rcmpaginatedselectinput')) {
-        return await fillCustomDropdownWithAI(apiKey, userData, element, jobContext);
-    }
-
     return false;
 }
 
-async function fillNativeSelectWithAI(apiKey, userData, select, jobContext) {
+async function fillNativeSelectWithAI(select, jobContext) {
     if (select.options.length <= 1 || select.disabled) return false;
 
     try {
         const fieldInfo = detectFieldType(select);
-        const options = Array.from(select.options).slice(1).map(opt => opt.text).join(', ');
+        // The first option is usually a "Please select" placeholder.
+        const options = Array.from(select.options).slice(1);
+        const optionTexts = options.map(opt => opt.text);
 
-        if (options.length === 0) return false;
+        const aiResponse = await askBackground({
+            action: "aiChooseOption",
+            options: optionTexts,
+            field: { context: fieldInfo.context },
+            jobContext: jobContext
+        });
+        const index = AutoApplyLib.matchOption(optionTexts, aiResponse);
+        if (index >= 0) {
+            const matchingOption = options[index];
+            select.style.backgroundColor = '#e8f5e8';
+            select.value = matchingOption.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
 
-        const prompt = `User Information: ${userData}\n\nSelect the best option from these choices: ${options}\n\nField context: ${fieldInfo.context}\nJob context: ${jobContext}\n\nRespond with only the exact option text:`;
+            setTimeout(() => {
+                select.style.backgroundColor = '';
+            }, 1000);
 
-        const aiResponse = await callOpenAI(apiKey, prompt);
-        if (aiResponse) {
-            const matchingOption = Array.from(select.options).find(option =>
-                option.text.toLowerCase().trim() === aiResponse.toLowerCase().trim() ||
-                option.text.toLowerCase().includes(aiResponse.toLowerCase()) ||
-                aiResponse.toLowerCase().includes(option.text.toLowerCase())
-            );
-
-            if (matchingOption) {
-                select.style.backgroundColor = '#e8f5e8';
-                select.value = matchingOption.value;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-
-                setTimeout(() => {
-                    select.style.backgroundColor = '';
-                }, 1000);
-
-                console.log(`Selected option: ${matchingOption.text}`);
-                return true;
-            }
+            console.log(`Selected option: ${matchingOption.text}`);
+            return true;
         }
         return false;
     } catch (error) {
@@ -543,53 +555,10 @@ async function fillNativeSelectWithAI(apiKey, userData, select, jobContext) {
     }
 }
 
-async function callOpenAI(apiKey, prompt) {
-    try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-3.5-turbo',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a helpful assistant that fills out job application forms. Return only the requested value with no extra text, quotes, or explanations. Be concise and professional.'
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
-                ],
-                max_tokens: 150,
-                temperature: 0.3
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(`OpenAI API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
-        }
-
-        const data = await response.json();
-        return data.choices[0].message.content.trim();
-    } catch (error) {
-        console.error('OpenAI API call failed:', error);
-        throw error;
-    }
-}
-
 function detectFieldType(element) {
-    const id = (element.id || '').toLowerCase();
-    const name = (element.name || '').toLowerCase();
-    const placeholder = (element.placeholder || '').toLowerCase();
-    const className = (element.className || '').toLowerCase();
-
     let label = '';
     if (element.labels && element.labels[0]) {
-        label = element.labels[0].textContent.toLowerCase();
+        label = element.labels[0].textContent;
     } else {
         const parent = element.parentElement;
         const prevSibling = element.previousElementSibling;
@@ -597,151 +566,47 @@ function detectFieldType(element) {
 
         if (parent) {
             const labelEl = parent.querySelector('label');
-            if (labelEl) label = labelEl.textContent.toLowerCase();
+            if (labelEl) label = labelEl.textContent;
         }
         if (prevSibling && prevSibling.tagName === 'LABEL') {
-            label = prevSibling.textContent.toLowerCase();
+            label = prevSibling.textContent;
         }
         if (nextSibling && nextSibling.tagName === 'LABEL') {
-            label = nextSibling.textContent.toLowerCase();
+            label = nextSibling.textContent;
         }
     }
 
     const parent = element.parentElement;
-    const nearbyText = parent ? parent.textContent.toLowerCase().substring(0, 100) : '';
-
-    const allText = `${id} ${name} ${placeholder} ${label} ${className} ${nearbyText}`;
+    const hints = {
+        autocomplete: element.getAttribute ? element.getAttribute('autocomplete') || '' : '',
+        label: label,
+        ariaLabel: element.getAttribute ? element.getAttribute('aria-label') || '' : '',
+        placeholder: element.placeholder || '',
+        name: element.name || '',
+        id: element.id || '',
+        nearbyText: parent ? parent.textContent.substring(0, 100) : ''
+    };
 
     return {
-        type: determineFieldType(allText),
-        context: allText.substring(0, 200),
+        type: AutoApplyLib.determineFieldType(hints),
+        context: AutoApplyLib.buildFieldContext(hints),
         placeholder: element.placeholder,
-        label: label,
+        label: label.trim(),
         element: element
     };
 }
 
-function determineFieldType(text) {
-    if (text.includes('email') || text.includes('e-mail')) return 'email';
-    if (text.includes('phone') || text.includes('tel') || text.includes('mobile') || text.includes('cell')) return 'phone';
-    if (text.includes('first') && text.includes('name')) return 'firstName';
-    if (text.includes('last') && text.includes('name')) return 'lastName';
-    if ((text.includes('full') || text.includes('complete')) && text.includes('name')) return 'fullName';
-    if (text.includes('name') && !text.includes('company') && !text.includes('user')) return 'fullName';
-    if (text.includes('address') || text.includes('street') || text.includes('location')) return 'address';
-    if (text.includes('city')) return 'city';
-    if (text.includes('state') || text.includes('province')) return 'state';
-    if (text.includes('zip') || text.includes('postal')) return 'zipCode';
-    if (text.includes('country')) return 'country';
-    if (text.includes('company') || text.includes('employer') || text.includes('organization')) return 'company';
-    if (text.includes('position') || text.includes('title') || text.includes('job') || text.includes('role')) return 'position';
-    if (text.includes('salary') || text.includes('compensation') || text.includes('wage') || text.includes('pay')) return 'salary';
-    if (text.includes('university') || text.includes('school') || text.includes('college') || text.includes('education') || text.includes('degree')) return 'education';
-    if (text.includes('skill') || text.includes('expertise') || text.includes('proficient')) return 'skills';
-    if (text.includes('experience') || text.includes('background')) return 'experience';
-    if (text.includes('cover') || text.includes('letter') || text.includes('summary') || text.includes('objective') || text.includes('about')) return 'coverLetter';
-    if (text.includes('linkedin')) return 'linkedin';
-    if (text.includes('website') || text.includes('portfolio') || text.includes('url') || text.includes('link')) return 'website';
-    if (text.includes('date') || text.includes('when') || text.includes('start') || text.includes('end')) return 'date';
-    if (text.includes('why') || text.includes('reason') || text.includes('motivation') || text.includes('interest')) return 'motivation';
-    if (text.includes('reference')) return 'reference';
-    if (text.includes('citizen') || text.includes('eligible') || text.includes('authorized')) return 'workAuthorization';
-
-    return 'generic';
-}
-
-async function generateAIResponse(apiKey, userData, fieldInfo, jobContext = '') {
+// The background builds the prompt from the field description and the stored profile.
+async function generateAIResponse(fieldInfo, jobContext = '') {
     const { type, context, placeholder, label } = fieldInfo;
-
-    let prompt = `User Information:\n${userData}\n\n`;
-
-    if (jobContext) {
-        prompt += `Page Context: ${jobContext}\n\n`;
-    }
-
-    prompt += `Field Information:\nType: ${type}\nContext: ${context}\nPlaceholder: ${placeholder}\nLabel: ${label}\n\nPlease provide `;
-
-    switch (type) {
-        case 'email':
-            prompt += 'the user\'s email address';
-            break;
-        case 'phone':
-            prompt += 'the user\'s phone number in standard format';
-            break;
-        case 'firstName':
-            prompt += 'only the user\'s first name';
-            break;
-        case 'lastName':
-            prompt += 'only the user\'s last name';
-            break;
-        case 'fullName':
-            prompt += 'the user\'s full name';
-            break;
-        case 'address':
-            prompt += 'the user\'s street address';
-            break;
-        case 'city':
-            prompt += 'the user\'s city';
-            break;
-        case 'state':
-            prompt += 'the user\'s state or province';
-            break;
-        case 'zipCode':
-            prompt += 'the user\'s zip or postal code';
-            break;
-        case 'country':
-            prompt += 'the user\'s country';
-            break;
-        case 'company':
-            prompt += 'the user\'s current or most recent company name';
-            break;
-        case 'position':
-            prompt += 'the user\'s current job title or desired position';
-            break;
-        case 'education':
-            prompt += 'relevant education information (degree and school)';
-            break;
-        case 'skills':
-            prompt += 'relevant skills for this field (comma-separated)';
-            break;
-        case 'experience':
-            prompt += 'brief professional experience summary';
-            break;
-        case 'coverLetter':
-            prompt += 'a brief professional response (2-3 sentences maximum)';
-            break;
-        case 'linkedin':
-            prompt += 'the user\'s LinkedIn profile URL';
-            break;
-        case 'website':
-            prompt += 'the user\'s website or portfolio URL';
-            break;
-        case 'salary':
-            prompt += 'an appropriate salary expectation based on the role';
-            break;
-        case 'date':
-            prompt += 'an appropriate date in YYYY-MM-DD format';
-            break;
-        case 'workAuthorization':
-            prompt += '"Yes" if the user is authorized to work, otherwise "No"';
-            break;
-        case 'motivation':
-            prompt += 'a brief explanation of interest or motivation (1-2 sentences)';
-            break;
-        default:
-            prompt += `an appropriate response for this field based on the context: ${context}`;
-    }
-
-    try {
-        const response = await callOpenAI(apiKey, prompt);
-        return response.replace(/^["']|["']$/g, '').trim();
-    } catch (error) {
-        console.error('Failed to generate AI response:', error);
-        throw error;
-    }
+    return askBackground({
+        action: "aiFillField",
+        field: { type, context, placeholder: placeholder || '', label: label || '' },
+        jobContext: jobContext
+    });
 }
 
-async function fillFormWithAI(apiKey, userData) {
+async function fillFormWithAI() {
     let fieldsCount = 0;
     let errors = [];
 
@@ -763,7 +628,7 @@ async function fillFormWithAI(apiKey, userData) {
                 const fieldInfo = detectFieldType(input);
                 console.log(`Processing field: ${fieldInfo.type} - ${fieldInfo.context.substring(0, 50)}`);
 
-                const aiResponse = await generateAIResponse(apiKey, userData, fieldInfo, jobContext);
+                const aiResponse = await generateAIResponse(fieldInfo, jobContext);
 
                 if (aiResponse && aiResponse.length > 0) {
                     input.focus();
@@ -789,7 +654,7 @@ async function fillFormWithAI(apiKey, userData) {
             if (select.options.length <= 1 || select.disabled) continue;
 
             try {
-                const result = await fillSelectWithAI(apiKey, userData, select, jobContext);
+                const result = await fillSelectWithAI(select, jobContext);
                 if (result) {
                     fieldsCount++;
                 }
@@ -871,7 +736,7 @@ function analyzePage() {
 // Listen for messages from popup and background script
 chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
     if (request.action === "fillFormWithAI") {
-        fillFormWithAI(request.apiKey, request.userData)
+        fillFormWithAI()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
@@ -883,17 +748,24 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
             sendResponse({ success: false, error: error.message });
         }
     } else if (request.action === "fillElementWithAI") {
-        fillElementWithAI(request.apiKey, request.userData, request.clickX, request.clickY)
+        fillElementWithAI()
             .then(result => sendResponse(result))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     } else if (request.action === "startLinkedInScraping") {
+        // Answer at once; scraping takes minutes and reports through jobSearchComplete.
+        const alreadyRunning = isSearching;
         startLinkedInScraping(request.maxPages, request.jobTitle, request.location)
-            .then(result => sendResponse(result))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true;
+            .catch(error => console.error('LinkedIn scraping error:', error));
+        sendResponse(alreadyRunning
+            ? { success: false, error: 'A search is already running in this tab' }
+            : { success: true, started: true });
+    } else if (request.action === "stopLinkedInScraping") {
+        sendResponse(stopLinkedInScraping());
     } else if (request.action === "analyzePage") {
         const result = analyzePage();
         sendResponse(result);
     }
 });
+
+})();

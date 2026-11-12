@@ -1,0 +1,9 @@
+{
+  "name": "auto-apply-plugin",
+  "private": true,
+  "description": "Chrome extension (Manifest V3, plain JavaScript, no build step). This file only exists for the node tests; the extension does not use it.",
+  "main": "test/run-all.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

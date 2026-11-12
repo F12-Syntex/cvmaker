@@ -440,7 +440,11 @@
         </div>
         <div class="input-group">
           <label for="apiKey">OpenAI API Key</label>
-          <input type="password" id="apiKey" placeholder="sk-..." />
+          <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+        </div>
+        <div class="input-group">
+          <label for="model">OpenAI Model</label>
+          <input type="text" id="model" placeholder="gpt-4.1-mini" autocomplete="off" spellcheck="false" />
         </div>
       </div>
       
@@ -575,6 +579,7 @@
     </div>
   </div>
   
+  <script src="lib/fields.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
