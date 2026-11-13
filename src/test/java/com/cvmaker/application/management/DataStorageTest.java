@@ -361,7 +361,24 @@ class DataStorageTest {
     }
 
     @Test
-    void legacyRecordSplitBeforeABraceLineIsNotLost()throws IOException {
+    void recordsWithoutAnEmailIdStayDistinct() throws IOException {
+        Files.write(db(), List.of("{\"subject\":\"a\"}", "{\"subject\":\"b\"}"), StandardCharsets.UTF_8);
+        DataStorage storage = new DataStorage(dir);
+        assertThat(storage.loadJobApplicationsDb().values()).extracting(JobApplicationData::getSubject)
+                .containsExactly("a", "b");
+
+        storage.saveJobApplicationData(fullRecord("x"));
+        JobApplicationData noId = new JobApplicationData();
+        noId.setSubject("c");
+        storage.saveJobApplicationData(noId);
+
+        Map<String, JobApplicationData> reloaded = new DataStorage(dir).loadJobApplicationsDb();
+        assertThat(reloaded).hasSize(4).containsKey("x").doesNotContainKey(null);
+        assertThat(reloaded.values()).extracting(JobApplicationData::getSubject).contains("a", "b", "c");
+    }
+
+    @Test
+    void legacyRecordSplitBeforeABraceLineIsNotLost() throws IOException {
         List<String> lines = List.of(
                 "id1||Subj||a@b.c||Co||Dev||2024-01-01||APPLICATION||notes:",
                 "{\"k\":1}||||||applied||0.9||true||2024-01-01T00:00:00",
