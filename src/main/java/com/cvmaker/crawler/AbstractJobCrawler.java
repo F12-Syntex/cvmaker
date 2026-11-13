@@ -76,6 +76,15 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     }
 
     /**
+     * Whether Chromium runs with its sandbox. Playwright adds {@code --no-sandbox} itself unless the
+     * sandbox is requested, so it is on by default and only off with the explicit
+     * {@code browser.unsafe.args.enabled=true} opt-in (needed for root/container runs).
+     */
+    static boolean chromiumSandboxEnabled(boolean unsafeBrowserArgsEnabled) {
+        return !unsafeBrowserArgsEnabled;
+    }
+
+    /**
      * Chromium arguments for the launch: the already-parsed, filtered list from the config.
      * It is not joined and re-split, so one argument may contain commas.
      */
@@ -109,6 +118,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
                             .setViewportSize(crawlerConfig.getViewportWidth(), crawlerConfig.getViewportHeight())
                             .setUserAgent(crawlerConfig.getUserAgent())
                             .setJavaScriptEnabled(true)
+                            .setChromiumSandbox(chromiumSandboxEnabled(crawlerConfig.isUnsafeBrowserArgsEnabled()))
                             .setArgs(launchArgs(crawlerConfig))
                             .setExtraHTTPHeaders(Map.of(
                                     "Accept", crawlerConfig.getAcceptHeader(),

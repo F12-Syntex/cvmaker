@@ -240,4 +240,12 @@ class AbstractJobCrawlerTest {
         assertThat(AbstractJobCrawler.launchArgs(config))
                 .containsExactly("--disable-features=A,B", "--disable-dev-shm-usage");
     }
+
+    @Test
+    void chromiumSandboxIsOnUnlessUnsafeArgsAreOptedIn() throws Exception {
+        assertThat(AbstractJobCrawler.chromiumSandboxEnabled(false)).isTrue();
+        assertThat(AbstractJobCrawler.chromiumSandboxEnabled(true)).isFalse();
+        assertThat(AbstractJobCrawler.chromiumSandboxEnabled(new CrawlerConfig().isUnsafeBrowserArgsEnabled()))
+                .isTrue();
+    }
 }
