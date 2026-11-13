@@ -287,7 +287,15 @@ public class DataStorage {
             return "\"\"";
         }
         String value = field;
-        if (!value.isEmpty() && "=+-@\t\r".indexOf(value.charAt(0)) >= 0) {
+        // A spreadsheet trims leading whitespace before deciding whether a cell is a formula
+        int first = 0;
+        while (first < value.length()
+                && (Character.isWhitespace(value.charAt(first)) || Character.isSpaceChar(value.charAt(first)))) {
+            first++;
+        }
+        boolean formula = first < value.length() && "=+-@".indexOf(value.charAt(first)) >= 0;
+        boolean control = !value.isEmpty() && "\t\r".indexOf(value.charAt(0)) >= 0;
+        if (formula || control) {
             value = "'" + value;
         }
         return "\"" + value.replace("\"", "\"\"") + "\"";
