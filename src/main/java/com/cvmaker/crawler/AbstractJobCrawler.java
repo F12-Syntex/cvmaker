@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import com.cvmaker.CVGenerator;
@@ -75,6 +76,14 @@ public abstract class AbstractJobCrawler implements JobCrawler {
     }
 
     /**
+     * Chromium arguments for the launch: the already-parsed, filtered list from the config.
+     * It is not joined and re-split, so one argument may contain commas.
+     */
+    static List<String> launchArgs(CrawlerConfig config) {
+        return List.copyOf(config.getBrowserArgList());
+    }
+
+    /**
      * Launch the browser and open the main page.
      *
      * <p>If anything fails, whatever was already started is closed again and the
@@ -100,7 +109,7 @@ public abstract class AbstractJobCrawler implements JobCrawler {
                             .setViewportSize(crawlerConfig.getViewportWidth(), crawlerConfig.getViewportHeight())
                             .setUserAgent(crawlerConfig.getUserAgent())
                             .setJavaScriptEnabled(true)
-                            .setArgs(Arrays.asList(crawlerConfig.getBrowserArgs().split(",")))
+                            .setArgs(launchArgs(crawlerConfig))
                             .setExtraHTTPHeaders(Map.of(
                                     "Accept", crawlerConfig.getAcceptHeader(),
                                     "Accept-Language", crawlerConfig.getAcceptLanguageHeader()

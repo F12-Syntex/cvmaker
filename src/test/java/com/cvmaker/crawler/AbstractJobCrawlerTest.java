@@ -230,4 +230,14 @@ class AbstractJobCrawlerTest {
         verify(crawler.browser.context, times(1)).close();
         verify(crawler.browser.playwright, times(1)).close();
     }
+
+    @Test
+    void launchArgsKeepAnArgumentWithCommasWhole() {
+        CrawlerConfig config = org.mockito.Mockito.mock(CrawlerConfig.class);
+        when(config.getBrowserArgList())
+                .thenReturn(java.util.List.of("--disable-features=A,B", "--disable-dev-shm-usage"));
+
+        assertThat(AbstractJobCrawler.launchArgs(config))
+                .containsExactly("--disable-features=A,B", "--disable-dev-shm-usage");
+    }
 }
