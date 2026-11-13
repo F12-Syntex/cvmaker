@@ -101,6 +101,20 @@ original conversation. It is updated and pushed every time a batch of tasks clos
 - **Still open from the reviews:** T17b findings 4 and 5 (extension), T17a findings 3 and 5, and whichever of
   T17a findings 1, 2, 4 are not listed as merged in the last entry below.
 
+### 00:48 UTC — final entry
+- **Data-store fixes (merged, 3 commits `fix(data):`).** T17a findings 1, 2 and 4: a legacy record split across
+  lines is no longer dropped in migration; records without an email ID stay distinct (they load under synthetic map
+  keys); the CSV formula guard trims leading whitespace and covers tab and CR.
+  Caveats from the agent: the test for finding 1 was never run against the untouched code, only against an earlier
+  incomplete fix; a line starting with `{` that has text after its closing brace is now treated as unreadable or
+  joined to a preceding incomplete legacy record. This is user-data code changed in the last ten minutes with no
+  second review: review it before trusting it with a real data file, and keep the `.bak-` files.
+- **Final gate, run by the lead at 00:48 UTC on the pushed head:** `mvn -q verify` exit 0, 806 tests, 0 failures,
+  0 errors, 0 skipped; `node --test auto-apply-plugin/` 72 pass, 0 fail.
+- Still open from the reviews: T17a findings 3 (same-second backup skipped) and 5 (Sheets clear-then-write);
+  T17b findings 4 (hidden fields get profile answers) and 5 (background validation and rate limit).
+- Session stopped at the 01:00 UTC limit. No agents are running.
+
 ### State at the end of the session
 - Done and merged: T0 and all of wave 1 (T1-T12). Backlog items closed: 1-8, 10-17, 19, 20, 22-35, 38, 39.
   Partly closed: 13 (both sides done), 18 (sheets side done, `ApplicationManager` side open), 37 (dead code removed
