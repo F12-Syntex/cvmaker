@@ -343,4 +343,52 @@ class DataStorageTest {
         assertThat(csv).contains("\"line one\nline two\r\n|| tail |\"");
         assertThat(csv).doesNotContain("\"other\"");
     }
+
+    @Test
+    void csvCellNeutralisesFormulasAfterLeadingWhitespaceAndCarriageReturn() {
+        assertThat(DataStorage.csvCell(" =HYPERLINK(\"http://evil\",\"x\")"))
+                .isEqualTo("\"' =HYPERLINK(\"\"http://evil\"\",\"\"x\"\")\"");
+        assertThat(DataStorage.csvCell("\n=1+1")).isEqualTo("\"'\n=1+1\"");
+        assertThat(DataStorage.csvCell(" \t+1")).isEqualTo("\"' \t+1\"");
+        assertThat(DataStorage.csvCell(" @SUM(A1)")).isEqualTo("\"' @SUM(A1)\"");
+        assertThat(DataStorage.csvCell("  -cmd")).isEqualTo("\"'  -cmd\"");
+        assertThat(DataStorage.csvCell("\r=1")).isEqualTo("\"'\r=1\"");
+        assertThat(DataStorage.csvCell("\rx")).isEqualTo("\"'\rx\"");
+        assertThat(DataStorage.csvCell("\tx")).isEqualTo("\"'\tx\"");
+        assertThat(DataStorage.csvCell("  plain")).isEqualTo("\"  plain\"");
+        assertThat(DataStorage.csvCell("a = b")).isEqualTo("\"a = b\"");
+        assertThat(DataStorage.csvCell("   ")).isEqualTo("\"   \"");
+    }
+
+    @Test
+    void recordsWithoutAnEmailIdStayDistinct() throws IOException {
+        Files.write(db(), List.of("{\"subject\":\"a\"}", "{\"subject\":\"b\"}"), StandardCharsets.UTF_8);
+        DataStorage storage = new DataStorage(dir);
+        assertThat(storage.loadJobApplicationsDb().values()).extracting(JobApplicationData::getSubject)
+                .containsExactly("a", "b");
+
+        storage.saveJobApplicationData(fullRecord("x"));
+        JobApplicationData noId = new JobApplicationData();
+        noId.setSubject("c");
+        storage.saveJobApplicationData(noId);
+
+        Map<String, JobApplicationData> reloaded = new DataStorage(dir).loadJobApplicationsDb();
+        assertThat(reloaded).hasSize(4).containsKey("x").doesNotContainKey(null);
+        assertThat(reloaded.values()).extracting(JobApplicationData::getSubject).contains("a", "b", "c");
+    }
+
+    @Test
+    void legacyRecordSplitBeforeABraceLineIsNotLost() throws IOException {
+        List<String> lines = List.of(
+                "id1||Subj||a@b.c||Co||Dev||2024-01-01||APPLICATION||notes:",
+                "{\"k\":1}||||||applied||0.9||true||2024-01-01T00:00:00",
+                fullRecord("json1").toJsonLine());
+        DataStorage.ParsedDb parsed = DataStorage.parseRecords(lines);
+        assertThat(parsed.unreadable).isZero();
+        assertThat(parsed.records).containsOnlyKeys("id1", "json1");
+
+        Files.write(db(), lines, StandardCharsets.UTF_8);
+        new DataStorage(dir).saveJobApplicationData(fullRecord("new"));
+        assertThat(new DataStorage(dir).loadJobApplicationsDb()).containsOnlyKeys("id1", "json1", "new");
+    }
 }

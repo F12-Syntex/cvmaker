@@ -117,7 +117,7 @@ public class DataStorage {
         data.setProcessedTimestamp(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
         try {
             ParsedDb existing = readDb();
-            existing.records.put(data.getEmailId(), data);
+            putRecord(existing.records, data);
             writeDb(existing.records, existing.needsBackup());
         } catch (IOException e) {
             System.err.println("Error saving job application data: " + e.getMessage());
@@ -190,14 +190,20 @@ public class DataStorage {
         StringBuilder pending = null;
         for (String line : lines) {
             String trimmed = line.strip();
-            if (trimmed.startsWith("{")) {
+            // The JSON parser tolerates text after the closing brace, so a record line must also end with one
+            JobApplicationData json = trimmed.startsWith("{") && trimmed.endsWith("}")
+                    ? JobApplicationData.fromJsonLine(trimmed) : null;
+            if (trimmed.startsWith("{") && json == null && pending != null && isIncompleteLegacy(pending)) {
+                // Continuation of a legacy record split by a newline: it only looks like JSON
+                pending.append('\n').append(line);
+            } else if (trimmed.startsWith("{")) {
                 flushLegacy(pending, result);
                 pending = null;
-                JobApplicationData data = JobApplicationData.fromJsonLine(trimmed);
+                JobApplicationData data = json;
                 if (data == null) {
                     result.unreadable++;
                 } else {
-                    result.records.put(data.getEmailId(), data);
+                    putRecord(result.records, data);
                 }
             } else if (trimmed.isEmpty()) {
                 if (pending != null && isIncompleteLegacy(pending)) {
@@ -216,6 +222,24 @@ public class DataStorage {
         return result;
     }
 
+    /**
+     * Stores {@code data} under its email ID. A record without one gets its own synthetic key, so
+     * several of them stay distinct instead of replacing each other on a shared null key.
+     */
+    private static void putRecord(Map<String, JobApplicationData> records, JobApplicationData data) {
+        String key = data.getEmailId();
+        if (key == null || key.isBlank()) {
+            int n = 1;
+            do {
+                key = NO_ID_KEY_PREFIX + n++;
+            } while (records.containsKey(key));
+        }
+        records.put(key, data);
+    }
+
+    /** Map key prefix for records that have no email ID; never written to the file. */
+    private static final String NO_ID_KEY_PREFIX = "\u0000no-email-id-";
+
     private static boolean isIncompleteLegacy(StringBuilder pending) {
         return JobApplicationData.legacyFieldCount(pending.toString()) < JobApplicationData.LEGACY_MIN_FIELDS;
     }
@@ -229,7 +253,7 @@ public class DataStorage {
         if (data == null) {
             result.unreadable++;
         } else {
-            result.records.put(data.getEmailId(), data);
+            putRecord(result.records, data);
         }
     }
 
@@ -281,7 +305,15 @@ public class DataStorage {
             return "\"\"";
         }
         String value = field;
-        if (!value.isEmpty() && "=+-@\t\r".indexOf(value.charAt(0)) >= 0) {
+        // A spreadsheet trims leading whitespace before deciding whether a cell is a formula
+        int first = 0;
+        while (first < value.length()
+                && (Character.isWhitespace(value.charAt(first)) || Character.isSpaceChar(value.charAt(first)))) {
+            first++;
+        }
+        boolean formula = first < value.length() && "=+-@".indexOf(value.charAt(first)) >= 0;
+        boolean control = !value.isEmpty() && "\t\r".indexOf(value.charAt(0)) >= 0;
+        if (formula || control) {
             value = "'" + value;
         }
         return "\"" + value.replace("\"", "\"\"") + "\"";
