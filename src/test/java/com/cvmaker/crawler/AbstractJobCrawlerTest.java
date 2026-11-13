@@ -57,6 +57,25 @@ class AbstractJobCrawlerTest {
         return new TestCrawler(CrawlerTestSupport.crawlerConfig(tempDir));
     }
 
+    // ---- adjustedDelay ----
+
+    @Test
+    void adjustedDelayMatchesSharedCrawlDelays() throws Exception {
+        TestCrawler crawler = newCrawler();
+        for (int speed = 1; speed <= 10; speed++) {
+            crawler.getCrawlerConfig().setCrawlingSpeed(speed);
+            assertThat(crawler.adjustedDelay(3000)).isEqualTo(CrawlDelays.adjustedDelay(3000, speed));
+        }
+    }
+
+    @Test
+    void adjustedDelayClampsSpeedSetAboveTenInsteadOfCollapsingToFloor() throws Exception {
+        TestCrawler crawler = newCrawler();
+        crawler.getCrawlerConfig().setCrawlingSpeed(20);
+
+        assertThat(crawler.adjustedDelay(3000)).isEqualTo(900);
+    }
+
     // ---- setupBrowser ----
 
     @Test

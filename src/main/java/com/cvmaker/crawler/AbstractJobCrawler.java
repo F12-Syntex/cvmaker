@@ -289,10 +289,13 @@ public abstract class AbstractJobCrawler implements JobCrawler {
         return cvGenerator;
     }
 
+    /**
+     * Scale a configured delay by this crawler's speed; see {@link CrawlDelays#adjustedDelay}.
+     *
+     * @param baseDelay the configured delay in milliseconds
+     * @return the delay to wait, in milliseconds
+     */
     protected int adjustedDelay(int baseDelay) {
-        // Calculate adjusted delay based on crawling speed (1-10)
-        // Speed 10 = fastest (0.3x delay), Speed 1 = slowest (1.5x delay)
-        float speedMultiplier = 1.5f - (crawlerConfig.getCrawlingSpeed() * 0.12f);
-        return Math.max(100, Math.round(baseDelay * speedMultiplier));
+        return CrawlDelays.adjustedDelay(baseDelay, crawlerConfig.getCrawlingSpeed());
     }
 }
