@@ -190,10 +190,16 @@ public class DataStorage {
         StringBuilder pending = null;
         for (String line : lines) {
             String trimmed = line.strip();
-            if (trimmed.startsWith("{")) {
+            // The JSON parser tolerates text after the closing brace, so a record line must also end with one
+            JobApplicationData json = trimmed.startsWith("{") && trimmed.endsWith("}")
+                    ? JobApplicationData.fromJsonLine(trimmed) : null;
+            if (trimmed.startsWith("{") && json == null && pending != null && isIncompleteLegacy(pending)) {
+                // Continuation of a legacy record split by a newline: it only looks like JSON
+                pending.append('\n').append(line);
+            } else if (trimmed.startsWith("{")) {
                 flushLegacy(pending, result);
                 pending = null;
-                JobApplicationData data = JobApplicationData.fromJsonLine(trimmed);
+                JobApplicationData data = json;
                 if (data == null) {
                     result.unreadable++;
                 } else {

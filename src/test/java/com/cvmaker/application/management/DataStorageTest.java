@@ -343,4 +343,19 @@ class DataStorageTest {
         assertThat(csv).contains("\"line one\nline two\r\n|| tail |\"");
         assertThat(csv).doesNotContain("\"other\"");
     }
+
+    @Test
+    void legacyRecordSplitBeforeABraceLineIsNotLost() throws IOException {
+        List<String> lines = List.of(
+                "id1||Subj||a@b.c||Co||Dev||2024-01-01||APPLICATION||notes:",
+                "{\"k\":1}||||||applied||0.9||true||2024-01-01T00:00:00",
+                fullRecord("json1").toJsonLine());
+        DataStorage.ParsedDb parsed = DataStorage.parseRecords(lines);
+        assertThat(parsed.unreadable).isZero();
+        assertThat(parsed.records).containsOnlyKeys("id1", "json1");
+
+        Files.write(db(), lines, StandardCharsets.UTF_8);
+        new DataStorage(dir).saveJobApplicationData(fullRecord("new"));
+        assertThat(new DataStorage(dir).loadJobApplicationsDb()).containsOnlyKeys("id1", "json1", "new");
+    }
 }
