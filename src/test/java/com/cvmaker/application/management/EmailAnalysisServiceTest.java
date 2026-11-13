@@ -264,4 +264,45 @@ class EmailAnalysisServiceTest {
             assertThat(result.data().getConfidenceScore()).as(answer).isEqualTo(0.5);
         }
     }
+
+    private static String promptSeenFor(String body) {
+        String[] seen = new String[1];
+        EmailAnalysisService service = new EmailAnalysisService(prompt -> {
+            seen[0] = prompt;
+            return "{}";
+        });
+        service.analyzeEmailDetailed("id-5", SUBJECT, FROM, DATE, body);
+        return seen[0];
+    }
+
+    @Test
+    void multiLineStyleBlockIsNotSentToTheModel() {
+        String prompt = promptSeenFor("<html><head><style>\n.btn {\n  color: red;\n}\n</style></head>"
+                + "<body><p>Please confirm your interview slot.</p></body></html>");
+
+        assertThat(prompt).contains("Please confirm your interview slot.");
+        assertThat(prompt).doesNotContain("color: red").doesNotContain(".btn");
+    }
+
+    @Test
+    void multiLineScriptBlockIsNotSentToTheModel() {
+        String prompt = promptSeenFor("<body><script type=\"text/javascript\">\nvar tracker = 1;\n"
+                + "window.track(tracker);\n</script><div>We received your application.</div></body>");
+
+        assertThat(prompt).contains("We received your application.");
+        assertThat(prompt).doesNotContain("var tracker").doesNotContain("window.track");
+    }
+
+    @Test
+    void plainTextBodyKeepsItsMeaning() {
+        String prompt = promptSeenFor("Hi,   we would like to\n schedule an interview.");
+
+        assertThat(prompt).contains("Hi, we would like to schedule an interview.");
+    }
+
+    @Test
+    void nullAndBlankBodiesDoNotFail() {
+        assertThat(promptSeenFor(null)).isNotNull();
+        assertThat(promptSeenFor("   ")).isNotNull();
+    }
 }

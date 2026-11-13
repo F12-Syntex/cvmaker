@@ -104,18 +104,9 @@ public class EmailAnalysisService {
             return "";
         }
 
-        String text = htmlContent
-                .replaceAll("(?i)<script[^>]*>.*?</script>", "")
-                .replaceAll("(?i)<style[^>]*>.*?</style>", "")
-                .replaceAll("<[^>]+>", " ")
-                .replace("&nbsp;", " ")
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'")
-                .replaceAll("\\s+", " ")
-                .trim();
+        org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(htmlContent);
+        doc.select("script, style, head").remove();
+        String text = doc.text().replace('\u00a0', ' ').replaceAll("\\s+", " ").trim();
 
         if (text.length() > 2000) {
             text = text.substring(0, 2000) + "...";
