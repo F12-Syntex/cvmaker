@@ -77,6 +77,30 @@ original conversation. It is updated and pushed every time a batch of tasks clos
   0 errors, 0 skipped; `node --test auto-apply-plugin/` 72 pass, 0 fail; `python3 -m py_compile gitinfo.py` ok;
   `target/cvmaker-1.0-SNAPSHOT.jar` built.
 
+### 00:43-00:52 UTC — last short tasks
+- **HTML email text (merged).** `EmailAnalysisService.extractTextFromHtml` now parses with jsoup, so multi-line
+  `<script>`/`<style>` blocks no longer reach the model. Four tests through `analyzeEmailDetailed`.
+- **Review T17a (merged): `reports/review-data-sheets.md`.** Items 7 and 8 both PASS. Findings, all in that file
+  with line numbers: (1, medium) a legacy record split by a newline whose continuation line starts with `{` is
+  dropped during migration and survives only in the `.bak-` file; (2, low) records without an email ID collapse
+  onto one null key; (3, low) a same-second backup is skipped; (4, low) the CSV formula guard checks only the first
+  character; (5, low) `GoogleSheetsService` clears the sheet and then writes, so a failed write leaves it empty.
+- **Review T17b (merged): `reports/review-config-ext.md`.** Item 16 FAIL, item 32 FAIL (the key handling itself
+  passes). Findings: (1, high) the only launch site never enabled the Chromium sandbox, so Playwright added
+  `--no-sandbox`; (2, medium) the unsafe-flag denylist was two exact case-sensitive strings; (3, low) browser args
+  were re-split on commas; (4, medium) the extension answers visually hidden, page-labelled fields with profile
+  data the page can read, with no field cap; (5, low) background completions are not rate-limited or
+  payload-validated.
+- **Sandbox fixes (merged, 3 commits `fix(security):`).** Findings 1-3 of T17b: the sandbox is on by default and
+  can be turned off only through the existing unsafe-flags opt-in; the denylist matches case-insensitively on the
+  flag name and covers the equivalents; an already-parsed arg list is no longer re-split. Limits: `CrawlerConfig`
+  still splits the `browser.args` property on commas, so a value containing a comma cannot be configured;
+  `--disable-features` is gated only when it names IsolateOrigins or site-per-process; the sandbox test covers the
+  pure decision method, not a real launch. These fixes have not had a second review.
+- Gate after these merges, run by the lead at 00:46 UTC: `mvn -q verify` exit 0, 803 tests, 0 failures, 0 errors.
+- **Still open from the reviews:** T17b findings 4 and 5 (extension), T17a findings 3 and 5, and whichever of
+  T17a findings 1, 2, 4 are not listed as merged in the last entry below.
+
 ### State at the end of the session
 - Done and merged: T0 and all of wave 1 (T1-T12). Backlog items closed: 1-8, 10-17, 19, 20, 22-35, 38, 39.
   Partly closed: 13 (both sides done), 18 (sheets side done, `ApplicationManager` side open), 37 (dead code removed
@@ -107,18 +131,17 @@ original conversation. It is updated and pushed every time a batch of tasks clos
 
 Each row of wave 2 in `PLAN.md` is a ready task: ID, files owned, and scope. In order of value:
 
-1. **T17a and T17b (reviews).** Wave 1 changed security- and data-sensitive code that no second reader has
-   checked: the JSON-lines application store and CSV export (item 7), Sheets formula-injection escaping (item 8),
-   the Chromium-flags opt-in (item 16), and the extension keeping the API key in the service worker (item 32).
-   Until these reviews run, treat those four fixes as tested but unreviewed.
+1. **Open review findings.** T17a and T17b ran at the end (see the 00:43-00:52 log entry and
+   `reports/review-*.md`). Fix what is still open there first: the extension filling hidden page-labelled fields
+   with profile data (medium), background completion validation and rate limit, the Sheets clear-then-write window,
+   and any `DataStorage` finding not merged. The sandbox fixes themselves need a second review.
 2. **T15 (item 21).** OAuth scopes are still broader than the code needs, and the auth code is still duplicated in
    `GmailService` and `GoogleSheetsService`. Narrowing scopes invalidates a stored token: detect and explain, do not
    delete the token file silently.
 3. **T13 (item 9).** AI form filling still does not receive the applicant's data, so the model can invent answers.
    This is the most important functional gap left in the crawler.
 4. **T16.** (a) `ApplicationManager` still has its own status priority map next to `ApplicationStatus`.
-   (b) `EmailAnalysisService.extractTextFromHtml`: the `<script>`/`<style>` patterns lack DOTALL, so multi-line
-   blocks survive and an HTML email can reach the model as mostly CSS; use jsoup. (c) `CVGenerator` does not yet use
+   (b) done at 00:44 (HTML text extraction). (c) `CVGenerator` does not yet use
    the `AiService` options constructor (timeout, retries), and the LaTeX timeout is not configurable.
 5. **T14 (item 36).** Reed selectors are still hardcoded; unused crawler settings are still in `CrawlerConfig`.
 6. **T18.** JaCoCo report in `mvn verify`, README section on running tests.
