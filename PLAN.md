@@ -45,20 +45,20 @@ Status values: `todo`, `in-progress`, `done`, `failed`, `blocked`.
 | T11 | C-ext | 34, 31, 33, 32 | implementer | `auto-apply-plugin/*` | `node --test auto-apply-plugin/` passes | high (32) | done (merged 23:09) |
 | T12 | C-misc | 38 | worker | `gitinfo.py` | `python3 -m py_compile gitinfo.py` | | done (merged 23:09) |
 
-## Wave 2 (dispatched 23:14, parallel, disjoint files, each in its own worktree)
+## Wave 2 (NOT DONE: dispatched 23:14, cut off by an interruption before any agent produced work)
 
 | ID | Task | Tier | Files owned | Risk | Status |
 |---|---|---|---|---|---|
-| T13 | Item 9: pass applicant data into AI form filling, add `shutdown()`, make `GenericCrawler` use it and the new `LabelResolver`/`FieldClassifier` where they apply | implementer | `J/crawler/generic/**`, `J/crawler/FormField.java`, `J/crawler/form/**`, `J/crawler/LabelResolver.java` | | in-progress |
-| T14 | Item 36: Reed selectors configurable; act on or delete unused crawler settings; `adjustedDelay` part of 37; use `CrawlDelays` in `AbstractJobCrawler` | implementer | `J/crawler/reed/**`, `J/crawler/CrawlDelays.java`, `J/crawler/AbstractJobCrawler.java`, `J/configuration/CrawlerConfig.java`, `configuration/reedcrawler.properties` | | in-progress |
-| T15 | Item 21: narrow OAuth scopes, one `GoogleAuthProvider`; token store location documented | implementer | `J/application/management/GmailService.java`, `GoogleSheetsService.java`, new `GoogleAuthProvider.java` | high | in-progress |
-| T16 | Item 18 `ApplicationManager` side (use `ApplicationStatus`); wire `AiService` options (item 12) and a configurable LaTeX timeout into `CVGenerator`; fix `extractTextFromHtml` (script/style patterns lack DOTALL) | implementer | `J/application/management/ApplicationManager.java`, `EmailAnalysisService.java`, `J/CVGenerator.java`, `J/JobDataFetcher.java` | | in-progress |
-| T17a | Review items 7 (data store) and 8 (formula injection) | reviewer | read-only, writes `reports/review-data-sheets.md` | | in-progress |
-| T17b | Review items 16 (Chromium flags) and 32 (extension API key) | reviewer | read-only, writes `reports/review-config-ext.md` | | in-progress |
-| T18 | Build hygiene: `.gitignore` entries (`__pycache__/`, `github_skills_analyzer.log`), JaCoCo report in `mvn verify` (no thresholds), README test section | worker | `.gitignore`, `pom.xml`, `README.md` | | in-progress |
-| T19 | Integration audit of the merged wave 1 (`ccc0ca0..HEAD`): cross-cluster seams, unused new helpers, README vs code, behaviour regressions | reviewer | read-only, writes `reports/integration-audit.md` | | in-progress |
+| T13 | Item 9: pass applicant data into AI form filling, add `shutdown()`, make `GenericCrawler` use it and the new `LabelResolver`/`FieldClassifier` where they apply | implementer | `J/crawler/generic/**`, `J/crawler/FormField.java`, `J/crawler/form/**`, `J/crawler/LabelResolver.java` | | todo |
+| T14 | Item 36: Reed selectors configurable; act on or delete unused crawler settings; `adjustedDelay` part of 37; use `CrawlDelays` in `AbstractJobCrawler` | implementer | `J/crawler/reed/**`, `J/crawler/CrawlDelays.java`, `J/crawler/AbstractJobCrawler.java`, `J/configuration/CrawlerConfig.java`, `configuration/reedcrawler.properties` | | todo (only the `adjustedDelay` part of 37 is done and merged; item 36 is todo) |
+| T15 | Item 21: narrow OAuth scopes, one `GoogleAuthProvider`; token store location documented | implementer | `J/application/management/GmailService.java`, `GoogleSheetsService.java`, new `GoogleAuthProvider.java` | high | todo |
+| T16 | Item 18 `ApplicationManager` side (use `ApplicationStatus`); wire `AiService` options (item 12) and a configurable LaTeX timeout into `CVGenerator`; fix `extractTextFromHtml` (script/style patterns lack DOTALL) | implementer | `J/application/management/ApplicationManager.java`, `EmailAnalysisService.java`, `J/CVGenerator.java`, `J/JobDataFetcher.java` | | todo |
+| T17a | Review items 7 (data store) and 8 (formula injection) | reviewer | read-only, writes `reports/review-data-sheets.md` | | todo |
+| T17b | Review items 16 (Chromium flags) and 32 (extension API key) | reviewer | read-only, writes `reports/review-config-ext.md` | | todo |
+| T18 | Build hygiene: `.gitignore` entries (`__pycache__/`, `github_skills_analyzer.log`), JaCoCo report in `mvn verify` (no thresholds), README test section | worker | `.gitignore`, `pom.xml`, `README.md` | | todo (`.gitignore` entries done; JaCoCo and README test section todo) |
+| T19 | Integration audit of the merged wave 1 (`ccc0ca0..HEAD`): cross-cluster seams, unused new helpers, README vs code, behaviour regressions | reviewer | read-only, writes `reports/integration-audit.md` | | todo |
 
-## Wave 3 (planned after wave 2 reports)
+## Wave 3 (todo, after wave 2)
 
 Fix findings from T17a, T17b and T19; final `mvn -q verify`, `node --test auto-apply-plugin/`,
 `python3 -m py_compile gitinfo.py`; final update of `SWARM_REPORT.md`.

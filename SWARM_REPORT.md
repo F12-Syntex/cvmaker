@@ -62,9 +62,29 @@ original conversation. It is updated and pushed every time a batch of tasks clos
   an email whose AI call always fails is retried on every run (no persisted attempt count);
   `websearch.SearchService` and `ApplicationConfig.getExaApiKey()` have no callers left.
 
-### 23:14 UTC — wave 2 dispatched
-- T13 (item 9), T14 (item 36), T15 (item 21), T16 (item 18 rest, CVGenerator wiring, HTML-strip bug), T18 (build hygiene),
-  plus three read-only reviews: T17a (items 7, 8), T17b (items 16, 32), T19 (integration audit). See `PLAN.md`.
+### 23:14 UTC — wave 2 dispatched, then lost
+- Six wave 2 agents were launched (T13, T14, T15, T16, T17a, T17b). The session was interrupted seconds later and
+  stayed idle until 00:40 UTC. The agents were stopped with it. Five worktrees had no changes at all.
+- T18 and T19 were never launched.
+
+### 00:40-00:50 UTC — wrap-up
+- Salvaged from the T14 worktree: `AbstractJobCrawler.adjustedDelay` now delegates to `CrawlDelays.adjustedDelay`
+  (the `adjustedDelay` part of backlog item 37), with a test. It passed `mvn -q test` before the merge.
+- `.gitignore`: added `__pycache__/` and `github_skills_analyzer.log`.
+- A last quick fix for `EmailAnalysisService.extractTextFromHtml` was attempted but its agent ran against a stale
+  base commit, so its commit (`3c5b34b`, never merged, local only) was discarded. The bug is still open, see below.
+- Final gate on the pushed branch, run by the lead at 00:42 UTC: `mvn -q verify` exit 0, 795 tests, 0 failures,
+  0 errors, 0 skipped; `node --test auto-apply-plugin/` 72 pass, 0 fail; `python3 -m py_compile gitinfo.py` ok;
+  `target/cvmaker-1.0-SNAPSHOT.jar` built.
+
+### State at the end of the session
+- Done and merged: T0 and all of wave 1 (T1-T12). Backlog items closed: 1-8, 10-17, 19, 20, 22-35, 38, 39.
+  Partly closed: 13 (both sides done), 18 (sheets side done, `ApplicationManager` side open), 37 (dead code removed
+  and `adjustedDelay` done; check `reports/C-*.md` for anything each cluster left).
+- Not done: backlog items 9, 21, 36 and the rest of 18; the three reviews; the build hygiene task.
+- Nothing was verified against live services: no OpenAI, Google, Exa, Reed or LinkedIn call was made, and `pdflatex`
+  is not installed in the build environment. Everything is verified by unit tests on logic pulled out of the
+  network and browser code.
 
 ## Decisions and deviations
 
@@ -83,6 +103,36 @@ original conversation. It is updated and pushed every time a batch of tasks clos
   PDFs under `generation/`). Removing it needs a history rewrite and a force push, which was not done.
 - No API keys or tokens were found in the working tree or in history.
 
-## Not started
+## Not started (pick up here)
 
-(filled in at the end of the session)
+Each row of wave 2 in `PLAN.md` is a ready task: ID, files owned, and scope. In order of value:
+
+1. **T17a and T17b (reviews).** Wave 1 changed security- and data-sensitive code that no second reader has
+   checked: the JSON-lines application store and CSV export (item 7), Sheets formula-injection escaping (item 8),
+   the Chromium-flags opt-in (item 16), and the extension keeping the API key in the service worker (item 32).
+   Until these reviews run, treat those four fixes as tested but unreviewed.
+2. **T15 (item 21).** OAuth scopes are still broader than the code needs, and the auth code is still duplicated in
+   `GmailService` and `GoogleSheetsService`. Narrowing scopes invalidates a stored token: detect and explain, do not
+   delete the token file silently.
+3. **T13 (item 9).** AI form filling still does not receive the applicant's data, so the model can invent answers.
+   This is the most important functional gap left in the crawler.
+4. **T16.** (a) `ApplicationManager` still has its own status priority map next to `ApplicationStatus`.
+   (b) `EmailAnalysisService.extractTextFromHtml`: the `<script>`/`<style>` patterns lack DOTALL, so multi-line
+   blocks survive and an HTML email can reach the model as mostly CSS; use jsoup. (c) `CVGenerator` does not yet use
+   the `AiService` options constructor (timeout, retries), and the LaTeX timeout is not configurable.
+5. **T14 (item 36).** Reed selectors are still hardcoded; unused crawler settings are still in `CrawlerConfig`.
+6. **T18.** JaCoCo report in `mvn verify`, README section on running tests.
+7. **T19.** Integration audit of wave 1 as a whole (cross-cluster seams, new helpers that nothing uses yet such as
+   `LabelResolver`/`FieldClassifier` inside `GenericCrawler`, README against code).
+
+Smaller leftovers named in the cluster reports: `websearch.SearchService` and `ApplicationConfig.getExaApiKey()`
+have no callers; an email whose AI call always fails is retried on every run; `JobDataFetcher` cannot read job
+boards that need JavaScript (a Playwright fallback could reuse `parseJobPage`); the extension sends the whole
+profile with each field prompt.
+
+Practical notes for whoever resumes:
+- Run agents in separate git worktrees and have each one run `git merge --ff-only claude/brave-fermat-dt1zw3`
+  first: one worktree in this session started from a stale commit.
+- After merging parallel branches, run the full gate before pushing. The only break in this session was a
+  dependency one agent removed while another started using it (`org.json`).
+- Local agent branches (`worktree-agent-*`) were not pushed; everything of value is merged into this branch.

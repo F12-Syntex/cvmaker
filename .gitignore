@@ -12,3 +12,7 @@ playwright-session
 reed-session
 temp
 /cache/
+
+# Python and helper-script output
+__pycache__/
+github_skills_analyzer.log
