@@ -257,13 +257,47 @@ public class CrawlerConfig {
         return Collections.unmodifiableList(result);
     }
 
-    private static boolean isUnsafeBrowserArg(String arg) {
-        return UNSAFE_BROWSER_ARGS.contains(flagName(arg));
+    /**
+     * Lower-case names of the Chromium flags that weaken the sandbox, site isolation, TLS or the
+     * same-origin policy, or expose the profile. They are dropped from {@code browser.args} unless
+     * {@link #UNSAFE_BROWSER_ARGS_PROPERTY} is {@code true}.
+     */
+    static final List<String> GATED_BROWSER_ARG_NAMES = List.of(
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu-sandbox",
+            "--disable-seccomp-filter-sandbox",
+            "--disable-namespace-sandbox",
+            "--disable-web-security",
+            "--disable-site-isolation-trials",
+            "--allow-running-insecure-content",
+            "--ignore-certificate-errors",
+            "--ignore-certificate-errors-spki-list",
+            "--ignore-ssl-errors",
+            "--allow-insecure-localhost",
+            "--remote-debugging-port",
+            "--remote-debugging-address",
+            "--remote-debugging-pipe",
+            "--remote-allow-origins");
+
+    /** Matches case-insensitively on the flag name before {@code =}. */
+    static boolean isUnsafeBrowserArg(String arg) {
+        String name = flagName(arg);
+        if (GATED_BROWSER_ARG_NAMES.contains(name)) {
+            return true;
+        }
+        if (name.equals("--disable-features")) {
+            String value = arg.toLowerCase(java.util.Locale.ROOT);
+            return value.contains("isolateorigins") || value.contains("site-per-process")
+                    || value.contains("siteperprocess");
+        }
+        return false;
     }
 
     private static String flagName(String arg) {
-        int eq = arg.indexOf('=');
-        return eq < 0 ? arg : arg.substring(0, eq);
+        String trimmed = arg.trim();
+        int eq = trimmed.indexOf('=');
+        return (eq < 0 ? trimmed : trimmed.substring(0, eq)).toLowerCase(java.util.Locale.ROOT);
     }
 
     private void warnAboutUnsafeBrowserArgs() {

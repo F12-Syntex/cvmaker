@@ -111,4 +111,21 @@ class CrawlerConfigBrowserArgsTest {
         assertThat(config.getMaxApplications()).isEqualTo(150);
         assertThat(config.getSearchKeywords()).isEqualTo("labour");
     }
+
+    @Test
+    void equivalentUnsafeFlagsAreDroppedCaseInsensitivelyWithoutTheOptIn() {
+        String configured = "--Disable-Web-Security,--NO-SANDBOX=1,--ignore-certificate-errors,"
+                + "--disable-setuid-sandbox,--allow-running-insecure-content,--disable-site-isolation-trials,"
+                + "--remote-debugging-port=9222,--disable-features=IsolateOrigins,--disable-dev-shm-usage";
+
+        assertThat(CrawlerConfig.effectiveBrowserArgs(configured, false)).containsExactly("--disable-dev-shm-usage");
+        assertThat(CrawlerConfig.effectiveBrowserArgs(configured, true))
+                .contains("--ignore-certificate-errors", "--Disable-Web-Security", "--remote-debugging-port=9222");
+    }
+
+    @Test
+    void optInDoesNotDuplicateAnUnsafeFlagWrittenInAnotherCase() {
+        assertThat(CrawlerConfig.effectiveBrowserArgs("--No-Sandbox", true))
+                .containsExactly("--No-Sandbox", "--disable-web-security");
+    }
 }
